@@ -1,0 +1,1 @@
+"""Panels module initialization."""
