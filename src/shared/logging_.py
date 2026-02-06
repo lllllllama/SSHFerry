@@ -2,6 +2,7 @@
 import logging
 import sys
 from pathlib import Path
+from typing import Optional
 
 from src.shared.errors import ErrorCode
 
@@ -39,7 +40,7 @@ class SanitizingFormatter(logging.Formatter):
 def setup_logger(
     name: str = "sshferry",
     level: int = logging.INFO,
-    log_file: Path | None = None
+    log_file: Optional[Path] = None
 ) -> logging.Logger:
     """
     Set up application logger with sanitization.
@@ -89,16 +90,16 @@ def log_task_event(
     engine: str,
     kind: str,
     status: str,
-    host: str | None = None,
-    port: int | None = None,
-    user: str | None = None,
-    src: str | None = None,
-    dst: str | None = None,
-    bytes_done: int | None = None,
-    bytes_total: int | None = None,
-    speed: float | None = None,
-    error_code: ErrorCode | None = None,
-    message: str | None = None
+    host: Optional[str] = None,
+    port: Optional[int] = None,
+    user: Optional[str] = None,
+    src: Optional[str] = None,
+    dst: Optional[str] = None,
+    bytes_done: Optional[int] = None,
+    bytes_total: Optional[int] = None,
+    speed: Optional[float] = None,
+    error_code: Optional[ErrorCode] = None,
+    message: Optional[str] = None
 ):
     """
     Log a structured task event.

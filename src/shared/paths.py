@@ -1,5 +1,6 @@
 """Path utilities and sandbox validation for SSHFerry."""
 import posixpath
+from typing import Optional
 
 from src.shared.errors import ValidationError
 
@@ -76,7 +77,7 @@ def join_remote_path(*parts: str) -> str:
     return posixpath.join(*parts)
 
 
-def get_remote_parent(path: str) -> str | None:
+def get_remote_parent(path: str) -> Optional[str]:
     """
     Get the parent directory of a remote path.
     

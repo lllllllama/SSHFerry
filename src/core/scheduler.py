@@ -1,11 +1,14 @@
 """Task scheduler for managing file transfer tasks."""
 import logging
+import os
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
 from queue import Queue
 from threading import Lock, Thread
+from typing import Dict, List, Optional
 
+from src.engines.mscp_engine import DEFAULT_THRESHOLD_BYTES, MscpEngine
 from src.engines.sftp_engine import SftpEngine
 from src.shared.errors import ErrorCode, SSHFerryError
 from src.shared.logging_ import log_task_event
@@ -27,7 +30,9 @@ class TaskScheduler:
         self,
         site_config: SiteConfig,
         max_workers: int = 3,
-        logger: logging.Logger | None = None
+        mscp_preset: str = "low",
+        mscp_threshold: int = DEFAULT_THRESHOLD_BYTES,
+        logger: Optional[logging.Logger] = None
     ):
         """
         Initialize task scheduler.
@@ -35,14 +40,18 @@ class TaskScheduler:
         Args:
             site_config: Site configuration for SFTP connection
             max_workers: Maximum number of concurrent tasks
+            mscp_preset: MSCP acceleration preset (low/medium/high)
+            mscp_threshold: File size threshold for auto MSCP (bytes)
             logger: Optional logger instance
         """
         self.site_config = site_config
         self.max_workers = max_workers
+        self.mscp_preset = mscp_preset
+        self.mscp_threshold = mscp_threshold
         self.logger = logger or logging.getLogger(__name__)
 
         # Task storage
-        self.tasks: dict[str, Task] = {}
+        self.tasks: Dict[str, Task] = {}
         self.task_lock = Lock()
 
         # Task queue (priority queue)
@@ -50,11 +59,11 @@ class TaskScheduler:
 
         # Thread pool for executing tasks
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
-        self.futures: dict[str, Future] = {}
+        self.futures: Dict[str, Future] = {}
 
         # Scheduler thread
         self.running = False
-        self.scheduler_thread: Thread | None = None
+        self.scheduler_thread: Optional[Thread] = None
 
     def start(self):
         """Start the scheduler."""
@@ -91,12 +100,12 @@ class TaskScheduler:
         self.logger.info(f"Added task {task.task_id}: {task.kind} {task.src} -> {task.dst}")
         return task.task_id
 
-    def get_task(self, task_id: str) -> Task | None:
+    def get_task(self, task_id: str) -> Optional[Task]:
         """Get task by ID."""
         with self.task_lock:
             return self.tasks.get(task_id)
 
-    def get_all_tasks(self) -> list[Task]:
+    def get_all_tasks(self) -> List[Task]:
         """Get all tasks."""
         with self.task_lock:
             return list(self.tasks.values())
@@ -176,11 +185,17 @@ class TaskScheduler:
         )
 
         try:
-            # Execute based on task kind
+            # Execute based on task kind and engine
             if task.kind == "upload":
-                self._execute_upload(task)
+                if task.engine == "mscp":
+                    self._execute_mscp_upload(task)
+                else:
+                    self._execute_upload(task)
             elif task.kind == "download":
-                self._execute_download(task)
+                if task.engine == "mscp":
+                    self._execute_mscp_download(task)
+                else:
+                    self._execute_download(task)
             elif task.kind == "delete":
                 self._execute_delete(task)
             elif task.kind == "mkdir":
@@ -265,6 +280,44 @@ class TaskScheduler:
         finally:
             engine.disconnect()
 
+    def _execute_mscp_upload(self, task: Task):
+        """Execute upload task using MSCP engine."""
+        checkpoint_dir = os.path.join(
+            os.path.expanduser("~"), ".sshferry", "checkpoints"
+        )
+        engine = MscpEngine(self.site_config, preset_name=self.mscp_preset, logger=self.logger)
+        
+        if not engine.is_available():
+            self.logger.warning("MSCP not available, falling back to SFTP")
+            self._execute_upload(task)
+            return
+        
+        exit_code = engine.upload(task.src, task.dst, checkpoint_dir=checkpoint_dir)
+        if exit_code != 0:
+            raise SSHFerryError(
+                ErrorCode.MSCP_EXIT_NONZERO,
+                f"mscp exited with code {exit_code}"
+            )
+
+    def _execute_mscp_download(self, task: Task):
+        """Execute download task using MSCP engine."""
+        checkpoint_dir = os.path.join(
+            os.path.expanduser("~"), ".sshferry", "checkpoints"
+        )
+        engine = MscpEngine(self.site_config, preset_name=self.mscp_preset, logger=self.logger)
+        
+        if not engine.is_available():
+            self.logger.warning("MSCP not available, falling back to SFTP")
+            self._execute_download(task)
+            return
+        
+        exit_code = engine.download(task.src, task.dst, checkpoint_dir=checkpoint_dir)
+        if exit_code != 0:
+            raise SSHFerryError(
+                ErrorCode.MSCP_EXIT_NONZERO,
+                f"mscp exited with code {exit_code}"
+            )
+
     def _execute_delete(self, task: Task):
         """Execute delete task."""
         engine = SftpEngine(self.site_config, self.logger)
@@ -304,7 +357,9 @@ class TaskScheduler:
         local_path: str,
         remote_path: str,
         file_size: int,
-        engine: str = "sftp"
+        engine: str = "sftp",
+        auto_engine: bool = True,
+        threshold: int = DEFAULT_THRESHOLD_BYTES
     ) -> Task:
         """
         Create an upload task.
@@ -313,11 +368,15 @@ class TaskScheduler:
             local_path: Local file path
             remote_path: Remote destination path
             file_size: File size in bytes
-            engine: Engine to use (sftp or mscp)
+            engine: Engine to use (sftp or mscp), ignored if auto_engine=True
+            auto_engine: If True, auto-select engine based on file size
+            threshold: Size threshold for auto MSCP selection
             
         Returns:
             Task object
         """
+        if auto_engine and file_size >= threshold:
+            engine = "mscp"
         return Task(
             task_id=str(uuid.uuid4()),
             kind="upload",
@@ -333,7 +392,9 @@ class TaskScheduler:
         remote_path: str,
         local_path: str,
         file_size: int,
-        engine: str = "sftp"
+        engine: str = "sftp",
+        auto_engine: bool = True,
+        threshold: int = DEFAULT_THRESHOLD_BYTES
     ) -> Task:
         """
         Create a download task.
@@ -342,11 +403,15 @@ class TaskScheduler:
             remote_path: Remote file path
             local_path: Local destination path
             file_size: File size in bytes
-            engine: Engine to use (sftp or mscp)
+            engine: Engine to use (sftp or mscp), ignored if auto_engine=True
+            auto_engine: If True, auto-select engine based on file size
+            threshold: Size threshold for auto MSCP selection
             
         Returns:
             Task object
         """
+        if auto_engine and file_size >= threshold:
+            engine = "mscp"
         return Task(
             task_id=str(uuid.uuid4()),
             kind="download",

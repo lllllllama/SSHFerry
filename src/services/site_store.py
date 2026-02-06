@@ -1,7 +1,9 @@
-"""Persistent site configuration storage (JSON file, no passwords)."""
+"""Site configuration storage."""
 import json
 import logging
+import platform
 from pathlib import Path
+from typing import List, Optional
 
 from src.shared.models import SiteConfig
 
@@ -28,10 +30,10 @@ def _default_store_path() -> Path:
 class SiteStore:
     """Load / save SiteConfig list from a JSON file (no passwords persisted)."""
 
-    def __init__(self, path: Path | None = None):
+    def __init__(self, path: Optional[Path] = None):
         self.path = path or _default_store_path()
 
-    def load(self) -> list[SiteConfig]:
+    def load(self) -> List[SiteConfig]:
         if not self.path.exists():
             return []
         try:

@@ -1,6 +1,7 @@
 """Remote file panel for displaying remote directory contents."""
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QByteArray, QMimeData, Qt, Signal
+from PySide6.QtGui import QDrag
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -18,8 +19,45 @@ from PySide6.QtWidgets import (
 from src.shared.models import RemoteEntry
 
 
+class DraggableTableWidget(QTableWidget):
+    """TableWidget with drag support for remote file entries."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.DragOnly)
+
+    def startDrag(self, supportedActions):
+        """Start a drag operation with remote paths."""
+        selected_rows = set(idx.row() for idx in self.selectedIndexes())
+        if not selected_rows:
+            return
+
+        # Collect remote paths from selected rows
+        paths = []
+        for row in selected_rows:
+            name_item = self.item(row, 0)
+            if name_item:
+                entry = name_item.data(Qt.UserRole)
+                if entry:
+                    paths.append(entry.path)
+
+        if not paths:
+            return
+
+        # Create custom MIME data for remote paths
+        mime_data = QMimeData()
+        data = "\n".join(paths).encode("utf-8")
+        mime_data.setData("application/x-sshferry-remote", QByteArray(data))
+
+        # Start drag
+        drag = QDrag(self)
+        drag.setMimeData(mime_data)
+        drag.exec(Qt.CopyAction)
+
+
 class RemotePanel(QWidget):
-    """Panel for displaying and navigating remote directory contents."""
+    """Panel for displaying and navigating remote directory contents with drag-drop support."""
 
     path_changed = Signal(str)  # Emitted when current path changes
     entry_activated = Signal(RemoteEntry)  # Emitted when entry is double-clicked
@@ -31,7 +69,9 @@ class RemotePanel(QWidget):
     request_delete = Signal(RemoteEntry)
     request_rename = Signal(RemoteEntry, str)  # entry, new_name
     request_upload = Signal()  # upload selected local files to current remote dir
+    request_upload_paths = Signal(list)  # upload specific local paths (from drag-drop)
     request_download = Signal(RemoteEntry)
+    request_download_paths = Signal(list)  # download remote paths (from drag-drop)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -63,8 +103,8 @@ class RemotePanel(QWidget):
 
         layout.addLayout(nav)
 
-        # File table
-        self.table = QTableWidget()
+        # File table with drag support
+        self.table = DraggableTableWidget()
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["Name", "Type", "Size", "Modified"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -75,6 +115,9 @@ class RemotePanel(QWidget):
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
         self.table.itemDoubleClicked.connect(self._on_item_double_clicked)
+
+        # Enable drop for receiving files from local panel
+        self.setAcceptDrops(True)
 
         layout.addWidget(self.table)
 
@@ -211,3 +254,31 @@ class RemotePanel(QWidget):
                 return f"{size:.1f} {unit}"
             size /= 1024.0
         return f"{size:.1f} PB"
+
+    # ------------------------------------------------------------------
+    # Drag-drop support for receiving uploads from LocalPanel
+    # ------------------------------------------------------------------
+
+    def dragEnterEvent(self, event):
+        """Accept drag events with file URLs."""
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        """Accept drag move events with file URLs."""
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        """Handle dropped files - emit upload request."""
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            paths = [url.toLocalFile() for url in urls if url.isLocalFile()]
+            if paths:
+                self.request_upload_paths.emit(paths)
+            event.acceptProposedAction()
+

@@ -1,5 +1,6 @@
 """Site editor dialog for creating and editing SSH site configurations."""
 import re
+from typing import Optional
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
@@ -10,6 +11,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QTextEdit,
@@ -24,7 +26,7 @@ class SiteEditorDialog(QDialog):
 
     site_saved = Signal(SiteConfig)
 
-    def __init__(self, site_config: SiteConfig | None = None, parent=None):
+    def __init__(self, site_config: Optional[SiteConfig] = None, parent=None):
         """
         Initialize site editor dialog.
         
@@ -195,14 +197,23 @@ class SiteEditorDialog(QDialog):
 
     def _save_and_accept(self):
         """Validate and save configuration."""
-        # Validate required fields
-        if not self.name_edit.text():
-            return
-        if not self.host_edit.text():
-            return
-        if not self.username_edit.text():
-            return
-        if not self.remote_root_edit.text():
+        # Validate required fields with user feedback
+        missing = []
+        if not self.name_edit.text().strip():
+            missing.append("Site Name")
+        if not self.host_edit.text().strip():
+            missing.append("Host")
+        if not self.username_edit.text().strip():
+            missing.append("Username")
+        if not self.remote_root_edit.text().strip():
+            missing.append("Remote Root (Sandbox)")
+
+        if missing:
+            QMessageBox.warning(
+                self,
+                "Missing Required Fields",
+                f"Please fill in the following fields:\n• " + "\n• ".join(missing)
+            )
             return
 
         auth_method = self.auth_method_combo.currentText()
@@ -227,6 +238,6 @@ class SiteEditorDialog(QDialog):
         self.site_saved.emit(config)
         self.accept()
 
-    def get_config(self) -> SiteConfig | None:
+    def get_config(self) -> Optional[SiteConfig]:
         """Get the configured site (after dialog accepted)."""
         return self.site_config

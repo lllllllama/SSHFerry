@@ -1,4 +1,6 @@
 """Task center panel for monitoring transfer tasks."""
+from typing import Optional
+
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -132,7 +134,7 @@ class TaskCenterPanel(QWidget):
         # Resize columns
         self.table.resizeColumnsToContents()
 
-    def get_selected_task_id(self) -> str | None:
+    def get_selected_task_id(self) -> Optional[str]:
         """Get the ID of the currently selected task."""
         selected_rows = self.table.selectedIndexes()
         if not selected_rows:

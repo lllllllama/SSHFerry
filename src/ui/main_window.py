@@ -1,5 +1,6 @@
 """Main application window."""
 import os
+from typing import List, Optional
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
 from src.core.scheduler import TaskScheduler
 from src.engines.sftp_engine import SftpEngine
 from src.services.connection_checker import ConnectionChecker
+from src.services.site_store import SiteStore
 from src.shared.errors import SSHFerryError
 from src.shared.logging_ import setup_logger
 from src.shared.models import RemoteEntry, SiteConfig
@@ -102,18 +104,19 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.logger = setup_logger()
-        self.sites: list[SiteConfig] = []
-        self.current_site: SiteConfig | None = None
-        self.scheduler: TaskScheduler | None = None
+        self.sites: List[SiteConfig] = []
+        self.current_site: Optional[SiteConfig] = None
+        self.scheduler: Optional[TaskScheduler] = None
+        self.site_store = SiteStore()
 
         # Keep references to background threads so they aren't GC'd
-        self._bg_threads: list[QThread] = []
+        self._bg_threads: List[QThread] = []
 
         self.setWindowTitle("SSHFerry - SSH/SFTP File Manager")
         self.resize(1400, 850)
 
         self._init_ui()
-        self._add_test_site()
+        self._load_saved_sites()
 
     # ------------------------------------------------------------------
     # UI setup
@@ -169,7 +172,11 @@ class MainWindow(QMainWindow):
         self.remote_panel.request_delete.connect(self._remote_delete)
         self.remote_panel.request_rename.connect(self._remote_rename)
         self.remote_panel.request_upload.connect(self._upload_files)
+        self.remote_panel.request_upload_paths.connect(self._upload_paths)
         self.remote_panel.request_download.connect(self._download_entry)
+
+        # Wire local panel signals for download via drag-drop
+        self.local_panel.files_dropped.connect(self._download_paths)
 
         # --- Bottom: task center + log ---
         bottom_splitter = QSplitter(Qt.Horizontal)
@@ -268,14 +275,24 @@ class MainWindow(QMainWindow):
 
         # Prompt for password if not set
         if self.current_site.auth_method == "password" and not self.current_site.password:
+            from PySide6.QtWidgets import QLineEdit
             pwd, ok = QInputDialog.getText(
                 self, "Password",
                 f"Password for {self.current_site.username}@{self.current_site.host}:",
-                echoMode=2,  # Password
+                QLineEdit.EchoMode.Password,
             )
             if not ok or not pwd:
                 return
             self.current_site.password = pwd
+
+        # Validate remote_root is set
+        if not self.current_site.remote_root or not self.current_site.remote_root.strip():
+            QMessageBox.warning(
+                self,
+                "Invalid Configuration",
+                "Remote Root (Sandbox) is not set.\nPlease edit the site and set a valid remote_root path."
+            )
+            return
 
         self._log(f"Connecting to {self.current_site.name}...")
         self.conn_label.setText("Connecting...")
@@ -398,6 +415,26 @@ class MainWindow(QMainWindow):
             elif os.path.isdir(local_path):
                 self._enqueue_dir_upload(local_path, remote_dir)
 
+    def _upload_paths(self, paths: list):
+        """Handle drag-drop upload from local panel."""
+        if not self._ensure_site() or not self.scheduler:
+            return
+        if not paths:
+            return
+
+        remote_dir = self.remote_panel.current_path
+        for local_path in paths:
+            if os.path.isfile(local_path):
+                fname = os.path.basename(local_path)
+                remote_path = join_remote_path(remote_dir, fname)
+                size = os.path.getsize(local_path)
+                task = TaskScheduler.create_upload_task(local_path, remote_path, size)
+                self.scheduler.add_task(task)
+                self._log(f"Queued upload (drag): {fname} -> {remote_path}")
+            elif os.path.isdir(local_path):
+                self._log(f"Queued upload folder (drag): {local_path}")
+                self._enqueue_dir_upload(local_path, remote_dir)
+
     def _enqueue_dir_upload(self, local_dir: str, remote_parent: str):
         """Recursively enqueue upload tasks for a directory."""
         dir_name = os.path.basename(local_dir)
@@ -429,6 +466,41 @@ class MainWindow(QMainWindow):
             task = TaskScheduler.create_download_task(entry.path, local_path, entry.size)
             self.scheduler.add_task(task)
             self._log(f"Queued download: {entry.name} -> {local_path}")
+
+    def _download_paths(self, remote_paths: list):
+        """Handle drag-drop download from remote panel."""
+        if not self._ensure_site() or not self.scheduler:
+            return
+        if not remote_paths:
+            return
+
+        local_dir = self.local_panel.get_current_dir()
+
+        # Find entries for the remote paths
+        for remote_path in remote_paths:
+            # Look up entry in remote panel's cached entries
+            entry = None
+            for e in self.remote_panel.entries:
+                if e.path == remote_path:
+                    entry = e
+                    break
+
+            if entry:
+                if entry.is_dir:
+                    self._log(f"Queued download folder (drag): {entry.path}")
+                    self._enqueue_dir_download(entry.path, local_dir)
+                else:
+                    local_path = os.path.join(local_dir, entry.name)
+                    task = TaskScheduler.create_download_task(entry.path, local_path, entry.size)
+                    self.scheduler.add_task(task)
+                    self._log(f"Queued download (drag): {entry.name} -> {local_path}")
+            else:
+                # Entry not found in cache, create task with unknown size
+                name = os.path.basename(remote_path)
+                local_path = os.path.join(local_dir, name)
+                task = TaskScheduler.create_download_task(remote_path, local_path, 0)
+                self.scheduler.add_task(task)
+                self._log(f"Queued download (drag): {name} -> {local_path}")
 
     def _enqueue_dir_download(self, remote_dir: str, local_parent: str):
         """Recursively enqueue download tasks for a remote directory."""
@@ -498,4 +570,22 @@ class MainWindow(QMainWindow):
         self._task_timer.stop()
         if self.scheduler:
             self.scheduler.stop()
+        # Save sites on exit
+        self._save_sites()
         event.accept()
+
+    def _load_saved_sites(self):
+        """Load saved sites or add test site if none exist."""
+        saved = self.site_store.load()
+        if saved:
+            self.sites = saved
+            for site in saved:
+                self.site_list.addItem(site.name)
+            self._log(f"Loaded {len(saved)} saved sites")
+        else:
+            self._add_test_site()
+
+    def _save_sites(self):
+        """Save sites to persistent storage."""
+        self.site_store.save(self.sites)
+        self._log(f"Saved {len(self.sites)} sites")

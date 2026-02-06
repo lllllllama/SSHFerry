@@ -1,6 +1,7 @@
 """Data models for SSHFerry."""
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import List, Optional
 
 from src.shared.errors import ErrorCode
 
@@ -17,17 +18,17 @@ class SiteConfig:
     remote_root: str  # Sandbox root directory (e.g., /root/autodl-tmp)
 
     # Auth credentials (runtime only, not persisted)
-    password: str | None = None
-    key_path: str | None = None
-    key_passphrase: str | None = None
+    password: Optional[str] = None
+    key_path: Optional[str] = None
+    key_passphrase: Optional[str] = None
 
     # MSCP configuration
-    mscp_path: str | None = None
+    mscp_path: Optional[str] = None
 
     # Advanced SSH options
-    proxy_jump: str | None = None
-    ssh_config_path: str | None = None
-    ssh_options: list[str] = field(default_factory=list)
+    proxy_jump: Optional[str] = None
+    ssh_config_path: Optional[str] = None
+    ssh_options: List[str] = field(default_factory=list)
 
     def __post_init__(self):
         """Validate configuration."""
@@ -46,7 +47,7 @@ class RemoteEntry:
     is_dir: bool
     size: int
     mtime: float  # Unix timestamp
-    mode: int | None = None
+    mode: Optional[int] = None
 
     @property
     def mtime_datetime(self) -> datetime:
@@ -72,9 +73,9 @@ class Task:
     bytes_done: int = 0
     status: str = "pending"  # pending, running, paused, done, failed, canceled
     retries: int = 0
-    error_code: ErrorCode | None = None
-    error_message: str | None = None
-    checkpoint_path: str | None = None  # For mscp resume
+    error_code: Optional[ErrorCode] = None
+    error_message: Optional[str] = None
+    checkpoint_path: Optional[str] = None  # For mscp resume
 
     @property
     def progress_percent(self) -> float:

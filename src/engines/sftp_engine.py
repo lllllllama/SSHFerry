@@ -3,6 +3,7 @@ import builtins
 import logging
 import os
 from pathlib import Path
+from typing import Callable, Optional
 
 import paramiko
 from paramiko import SFTPClient, SSHClient
@@ -27,7 +28,7 @@ class SftpEngine:
     Thread-safe when each thread uses its own instance.
     """
 
-    def __init__(self, site_config: SiteConfig, logger: logging.Logger | None = None):
+    def __init__(self, site_config: SiteConfig, logger: Optional[logging.Logger] = None):
         """
         Initialize SFTP engine.
         
@@ -37,8 +38,8 @@ class SftpEngine:
         """
         self.site_config = site_config
         self.logger = logger or logging.getLogger(__name__)
-        self.ssh_client: SSHClient | None = None
-        self.sftp_client: SFTPClient | None = None
+        self.ssh_client: Optional[SSHClient] = None
+        self.sftp_client: Optional[SFTPClient] = None
         self._connected = False
 
     def connect(self) -> None:
@@ -228,7 +229,7 @@ class SftpEngine:
         self,
         local_path: str,
         remote_path: str,
-        callback: callable | None = None
+        callback: Optional[Callable] = None
     ) -> None:
         """
         Upload a file to remote server.
@@ -254,7 +255,7 @@ class SftpEngine:
         self,
         remote_path: str,
         local_path: str,
-        callback: callable | None = None
+        callback: Optional[Callable] = None
     ) -> None:
         """
         Download a file from remote server.

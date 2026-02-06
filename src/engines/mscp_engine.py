@@ -5,6 +5,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Dict, List, Optional
 
 from src.shared.errors import ErrorCode, SSHFerryError
 from src.shared.models import SiteConfig
@@ -23,7 +24,7 @@ class MscpPreset:
     interval: float       # -I (seconds)
 
 
-PRESETS: dict[str, MscpPreset] = {
+PRESETS: Dict[str, MscpPreset] = {
     "low":    MscpPreset("low",    nr_connections=4,  nr_ahead=32, max_startups=8, interval=0),
     "medium": MscpPreset("medium", nr_connections=8,  nr_ahead=32, max_startups=8, interval=0.1),
     "high":   MscpPreset("high",   nr_connections=16, nr_ahead=64, max_startups=8, interval=0.2),
@@ -50,12 +51,12 @@ class MscpEngine:
         self,
         site_config: SiteConfig,
         preset_name: str = "low",
-        logger: logging.Logger | None = None,
+        logger: Optional[logging.Logger] = None,
     ):
         self.site_config = site_config
         self.preset = PRESETS.get(preset_name, PRESETS["low"])
         self.logger = logger or logging.getLogger(__name__)
-        self._process: subprocess.Popen | None = None
+        self._process: Optional[subprocess.Popen] = None
         self._mscp_path = self._resolve_mscp_path()
 
     # ------------------------------------------------------------------
@@ -70,7 +71,7 @@ class MscpEngine:
         self,
         local_path: str,
         remote_path: str,
-        checkpoint_dir: str | None = None,
+        checkpoint_dir: Optional[str] = None,
     ) -> int:
         """
         Upload *local_path* to *remote_path* using mscp.
@@ -84,7 +85,7 @@ class MscpEngine:
         self,
         remote_path: str,
         local_path: str,
-        checkpoint_dir: str | None = None,
+        checkpoint_dir: Optional[str] = None,
     ) -> int:
         """Download *remote_path* to *local_path* using mscp."""
         remote_spec = self._remote_spec(remote_path)
@@ -113,7 +114,7 @@ class MscpEngine:
         cfg = self.site_config
         return f"{cfg.username}@{cfg.host}:{path}"
 
-    def _run(self, src: str, dst: str, checkpoint_dir: str | None = None) -> int:
+    def _run(self, src: str, dst: str, checkpoint_dir: Optional[str] = None) -> int:
         if not self._mscp_path:
             raise SSHFerryError(ErrorCode.MSCP_NOT_FOUND, "mscp binary not found")
 
@@ -121,11 +122,11 @@ class MscpEngine:
         self.logger.info(f"mscp: {' '.join(cmd)}")
         return self._exec(cmd)
 
-    def _build_cmd(self, src: str, dst: str, checkpoint_dir: str | None = None) -> list[str]:
+    def _build_cmd(self, src: str, dst: str, checkpoint_dir: Optional[str] = None) -> List[str]:
         p = self.preset
         cfg = self.site_config
 
-        cmd: list[str] = [self._mscp_path]
+        cmd: List[str] = [self._mscp_path]
         cmd += ["-n", str(p.nr_connections)]
         cmd += ["-a", str(p.nr_ahead)]
         cmd += ["-u", str(p.max_startups)]
@@ -151,7 +152,7 @@ class MscpEngine:
         cmd += [src, dst]
         return cmd
 
-    def _exec(self, cmd: list[str], cwd: str | None = None) -> int:
+    def _exec(self, cmd: List[str], cwd: Optional[str] = None) -> int:
         env = os.environ.copy()
         # Inject password for mscp via env var (if password-based auth)
         if self.site_config.auth_method == "password" and self.site_config.password:
@@ -174,7 +175,7 @@ class MscpEngine:
         self._process = None
         return rc
 
-    def _resolve_mscp_path(self) -> str | None:
+    def _resolve_mscp_path(self) -> Optional[str]:
         """Find the mscp binary."""
         # 1. Explicit config
         if self.site_config.mscp_path and os.path.isfile(self.site_config.mscp_path):

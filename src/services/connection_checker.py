@@ -1,5 +1,6 @@
 """Connection self-check utility for SSH/SFTP connections."""
 from dataclasses import dataclass
+from typing import Optional
 
 from src.engines.sftp_engine import SftpEngine
 from src.shared.errors import SSHFerryError
@@ -13,7 +14,7 @@ class CheckResult:
     name: str
     passed: bool
     message: str
-    error: Exception | None = None
+    error: Optional[Exception] = None
 
 
 class ConnectionChecker:
