@@ -1,8 +1,7 @@
 """Path utilities and sandbox validation for SSHFerry."""
 import posixpath
-from typing import Optional
 
-from .errors import ValidationError
+from src.shared.errors import ValidationError
 
 
 def normalize_remote_path(path: str) -> str:
@@ -21,11 +20,16 @@ def normalize_remote_path(path: str) -> str:
     """
     # Use posixpath since remote is always POSIX
     normalized = posixpath.normpath(path)
-    
+
     # Ensure absolute path
     if not normalized.startswith('/'):
         normalized = '/' + normalized
-        
+
+    # posixpath.normpath preserves leading // (POSIX implementation-defined).
+    # We always want a single leading slash.
+    while normalized.startswith('//'):
+        normalized = normalized[1:]
+
     return normalized
 
 
@@ -45,14 +49,14 @@ def ensure_in_sandbox(path: str, remote_root: str) -> None:
     """
     normalized_path = normalize_remote_path(path)
     normalized_root = normalize_remote_path(remote_root)
-    
+
     # Check if path is exactly root or starts with root/
     if normalized_path == normalized_root:
         return
-    
+
     if normalized_path.startswith(normalized_root + '/'):
         return
-    
+
     raise ValidationError(
         f"Path '{path}' is outside sandbox '{remote_root}'. "
         f"Normalized: '{normalized_path}' vs root '{normalized_root}'"
@@ -72,7 +76,7 @@ def join_remote_path(*parts: str) -> str:
     return posixpath.join(*parts)
 
 
-def get_remote_parent(path: str) -> Optional[str]:
+def get_remote_parent(path: str) -> str | None:
     """
     Get the parent directory of a remote path.
     

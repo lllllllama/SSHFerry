@@ -2,9 +2,8 @@
 import logging
 import sys
 from pathlib import Path
-from typing import Optional
 
-from .errors import ErrorCode
+from src.shared.errors import ErrorCode
 
 
 class SanitizingFormatter(logging.Formatter):
@@ -13,7 +12,7 @@ class SanitizingFormatter(logging.Formatter):
     
     Prevents passwords, passphrases, and key contents from being logged.
     """
-    
+
     SENSITIVE_KEYS = [
         'password',
         'passphrase',
@@ -22,7 +21,7 @@ class SanitizingFormatter(logging.Formatter):
         'secret',
         'token',
     ]
-    
+
     def format(self, record: logging.LogRecord) -> str:
         """Format and sanitize log record."""
         # Sanitize message
@@ -33,14 +32,14 @@ class SanitizingFormatter(logging.Formatter):
                     # Replace sensitive data patterns
                     # This is a simple approach; production may need more sophisticated detection
                     pass
-        
+
         return super().format(record)
 
 
 def setup_logger(
     name: str = "sshferry",
     level: int = logging.INFO,
-    log_file: Optional[Path] = None
+    log_file: Path | None = None
 ) -> logging.Logger:
     """
     Set up application logger with sanitization.
@@ -55,10 +54,10 @@ def setup_logger(
     """
     logger = logging.getLogger(name)
     logger.setLevel(level)
-    
+
     # Remove existing handlers
     logger.handlers.clear()
-    
+
     # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(level)
@@ -68,7 +67,7 @@ def setup_logger(
     )
     console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
-    
+
     # File handler (if specified)
     if log_file:
         log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -80,7 +79,7 @@ def setup_logger(
         )
         file_handler.setFormatter(file_formatter)
         logger.addHandler(file_handler)
-    
+
     return logger
 
 
@@ -90,16 +89,16 @@ def log_task_event(
     engine: str,
     kind: str,
     status: str,
-    host: Optional[str] = None,
-    port: Optional[int] = None,
-    user: Optional[str] = None,
-    src: Optional[str] = None,
-    dst: Optional[str] = None,
-    bytes_done: Optional[int] = None,
-    bytes_total: Optional[int] = None,
-    speed: Optional[float] = None,
-    error_code: Optional[ErrorCode] = None,
-    message: Optional[str] = None
+    host: str | None = None,
+    port: int | None = None,
+    user: str | None = None,
+    src: str | None = None,
+    dst: str | None = None,
+    bytes_done: int | None = None,
+    bytes_total: int | None = None,
+    speed: float | None = None,
+    error_code: ErrorCode | None = None,
+    message: str | None = None
 ):
     """
     Log a structured task event.
@@ -127,7 +126,7 @@ def log_task_event(
         f"kind={kind}",
         f"status={status}",
     ]
-    
+
     if host and port:
         parts.append(f"remote={host}:{port}")
     if user:
@@ -148,9 +147,9 @@ def log_task_event(
         parts.append(f"error={error_code.name}")
     if message:
         parts.append(f"msg={message}")
-    
+
     log_msg = " | ".join(parts)
-    
+
     if status == "failed" or error_code:
         logger.error(log_msg)
     elif status in ("done", "completed"):

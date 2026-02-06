@@ -3,14 +3,13 @@ import logging
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
-from queue import PriorityQueue, Queue
+from queue import Queue
 from threading import Lock, Thread
-from typing import Optional
 
-from ..engines.sftp_engine import SftpEngine
-from ..shared.errors import ErrorCode, SSHFerryError
-from ..shared.logging_ import log_task_event
-from ..shared.models import SiteConfig, Task
+from src.engines.sftp_engine import SftpEngine
+from src.shared.errors import ErrorCode, SSHFerryError
+from src.shared.logging_ import log_task_event
+from src.shared.models import SiteConfig, Task
 
 
 class TaskScheduler:
@@ -23,12 +22,12 @@ class TaskScheduler:
     - pending -> running -> done/failed/canceled
     - running -> paused -> running
     """
-    
+
     def __init__(
         self,
         site_config: SiteConfig,
         max_workers: int = 3,
-        logger: Optional[logging.Logger] = None
+        logger: logging.Logger | None = None
     ):
         """
         Initialize task scheduler.
@@ -41,32 +40,32 @@ class TaskScheduler:
         self.site_config = site_config
         self.max_workers = max_workers
         self.logger = logger or logging.getLogger(__name__)
-        
+
         # Task storage
         self.tasks: dict[str, Task] = {}
         self.task_lock = Lock()
-        
+
         # Task queue (priority queue)
         self.task_queue: Queue[str] = Queue()
-        
+
         # Thread pool for executing tasks
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self.futures: dict[str, Future] = {}
-        
+
         # Scheduler thread
         self.running = False
-        self.scheduler_thread: Optional[Thread] = None
-    
+        self.scheduler_thread: Thread | None = None
+
     def start(self):
         """Start the scheduler."""
         if self.running:
             return
-        
+
         self.running = True
         self.scheduler_thread = Thread(target=self._scheduler_loop, daemon=True)
         self.scheduler_thread.start()
         self.logger.info("Task scheduler started")
-    
+
     def stop(self):
         """Stop the scheduler and wait for completion."""
         self.running = False
@@ -74,7 +73,7 @@ class TaskScheduler:
             self.scheduler_thread.join(timeout=5)
         self.executor.shutdown(wait=True)
         self.logger.info("Task scheduler stopped")
-    
+
     def add_task(self, task: Task) -> str:
         """
         Add a task to the queue.
@@ -88,20 +87,20 @@ class TaskScheduler:
         with self.task_lock:
             self.tasks[task.task_id] = task
             self.task_queue.put(task.task_id)
-        
+
         self.logger.info(f"Added task {task.task_id}: {task.kind} {task.src} -> {task.dst}")
         return task.task_id
-    
-    def get_task(self, task_id: str) -> Optional[Task]:
+
+    def get_task(self, task_id: str) -> Task | None:
         """Get task by ID."""
         with self.task_lock:
             return self.tasks.get(task_id)
-    
+
     def get_all_tasks(self) -> list[Task]:
         """Get all tasks."""
         with self.task_lock:
             return list(self.tasks.values())
-    
+
     def cancel_task(self, task_id: str) -> bool:
         """
         Cancel a task.
@@ -116,7 +115,7 @@ class TaskScheduler:
             task = self.tasks.get(task_id)
             if not task:
                 return False
-            
+
             if task.status == "pending":
                 task.status = "canceled"
                 self.logger.info(f"Canceled pending task {task_id}")
@@ -128,9 +127,9 @@ class TaskScheduler:
                     task.status = "canceled"
                     self.logger.info(f"Canceled running task {task_id}")
                     return True
-        
+
         return False
-    
+
     def _scheduler_loop(self):
         """Main scheduler loop that processes tasks from queue."""
         while self.running:
@@ -138,21 +137,21 @@ class TaskScheduler:
                 # Get next task from queue (with timeout to allow checking self.running)
                 if not self.task_queue.empty():
                     task_id = self.task_queue.get(timeout=0.5)
-                    
+
                     with self.task_lock:
                         task = self.tasks.get(task_id)
-                    
+
                     if task and task.status == "pending":
                         # Submit task to executor
                         future = self.executor.submit(self._execute_task, task)
                         self.futures[task_id] = future
                 else:
                     time.sleep(0.1)
-                    
+
             except Exception as e:
                 self.logger.error(f"Scheduler loop error: {e}")
                 time.sleep(1)
-    
+
     def _execute_task(self, task: Task):
         """
         Execute a single task.
@@ -162,7 +161,7 @@ class TaskScheduler:
         """
         with self.task_lock:
             task.status = "running"
-        
+
         log_task_event(
             self.logger,
             task.task_id,
@@ -175,7 +174,7 @@ class TaskScheduler:
             task.src,
             task.dst
         )
-        
+
         try:
             # Execute based on task kind
             if task.kind == "upload":
@@ -190,11 +189,11 @@ class TaskScheduler:
                 self._execute_rename(task)
             else:
                 raise ValueError(f"Unknown task kind: {task.kind}")
-            
+
             with self.task_lock:
                 task.status = "done"
                 task.bytes_done = task.bytes_total
-            
+
             log_task_event(
                 self.logger,
                 task.task_id,
@@ -204,13 +203,13 @@ class TaskScheduler:
                 bytes_done=task.bytes_total,
                 bytes_total=task.bytes_total
             )
-            
+
         except SSHFerryError as e:
             with self.task_lock:
                 task.status = "failed"
                 task.error_code = e.code
                 task.error_message = e.message
-            
+
             log_task_event(
                 self.logger,
                 task.task_id,
@@ -225,7 +224,7 @@ class TaskScheduler:
                 task.status = "failed"
                 task.error_code = ErrorCode.UNKNOWN_ERROR
                 task.error_message = str(e)
-            
+
             log_task_event(
                 self.logger,
                 task.task_id,
@@ -235,42 +234,42 @@ class TaskScheduler:
                 error_code=ErrorCode.UNKNOWN_ERROR,
                 message=str(e)
             )
-    
+
     def _execute_upload(self, task: Task):
         """Execute upload task."""
         engine = SftpEngine(self.site_config, self.logger)
         engine.connect()
-        
+
         def progress_callback(bytes_transferred, bytes_total):
             with self.task_lock:
                 task.bytes_done = bytes_transferred
                 task.bytes_total = bytes_total
-        
+
         try:
             engine.upload_file(task.src, task.dst, callback=progress_callback)
         finally:
             engine.disconnect()
-    
+
     def _execute_download(self, task: Task):
         """Execute download task."""
         engine = SftpEngine(self.site_config, self.logger)
         engine.connect()
-        
+
         def progress_callback(bytes_transferred, bytes_total):
             with self.task_lock:
                 task.bytes_done = bytes_transferred
                 task.bytes_total = bytes_total
-        
+
         try:
             engine.download_file(task.src, task.dst, callback=progress_callback)
         finally:
             engine.disconnect()
-    
+
     def _execute_delete(self, task: Task):
         """Execute delete task."""
         engine = SftpEngine(self.site_config, self.logger)
         engine.connect()
-        
+
         try:
             # Try to remove as file first, then as directory
             try:
@@ -279,27 +278,27 @@ class TaskScheduler:
                 engine.remove_dir(task.src)
         finally:
             engine.disconnect()
-    
+
     def _execute_mkdir(self, task: Task):
         """Execute mkdir task."""
         engine = SftpEngine(self.site_config, self.logger)
         engine.connect()
-        
+
         try:
             engine.mkdir(task.dst)
         finally:
             engine.disconnect()
-    
+
     def _execute_rename(self, task: Task):
         """Execute rename task."""
         engine = SftpEngine(self.site_config, self.logger)
         engine.connect()
-        
+
         try:
             engine.rename(task.src, task.dst)
         finally:
             engine.disconnect()
-    
+
     @staticmethod
     def create_upload_task(
         local_path: str,
@@ -328,7 +327,7 @@ class TaskScheduler:
             bytes_total=file_size,
             status="pending"
         )
-    
+
     @staticmethod
     def create_download_task(
         remote_path: str,
@@ -357,7 +356,7 @@ class TaskScheduler:
             bytes_total=file_size,
             status="pending"
         )
-    
+
     @staticmethod
     def create_mkdir_task(remote_path: str, engine: str = "sftp") -> Task:
         """Create a mkdir task."""
@@ -370,7 +369,7 @@ class TaskScheduler:
             bytes_total=0,
             status="pending"
         )
-    
+
     @staticmethod
     def create_delete_task(remote_path: str, engine: str = "sftp") -> Task:
         """Create a delete task."""

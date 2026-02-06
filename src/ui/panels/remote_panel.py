@@ -1,11 +1,12 @@
 """Remote file panel for displaying remote directory contents."""
-from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QHeaderView,
+    QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -14,123 +15,198 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..shared.models import RemoteEntry
+from src.shared.models import RemoteEntry
 
 
 class RemotePanel(QWidget):
     """Panel for displaying and navigating remote directory contents."""
-    
+
     path_changed = Signal(str)  # Emitted when current path changes
     entry_activated = Signal(RemoteEntry)  # Emitted when entry is double-clicked
-    
+
+    # File operation requests (handled by MainWindow)
+    request_go_up = Signal()
+    request_refresh = Signal()
+    request_mkdir = Signal(str)  # new dir name
+    request_delete = Signal(RemoteEntry)
+    request_rename = Signal(RemoteEntry, str)  # entry, new_name
+    request_upload = Signal()  # upload selected local files to current remote dir
+    request_download = Signal(RemoteEntry)
+
     def __init__(self, parent=None):
-        """Initialize remote panel."""
         super().__init__(parent)
         self.current_path = "/"
         self.entries: list[RemoteEntry] = []
-        
         self._init_ui()
-    
+
     def _init_ui(self):
-        """Initialize UI components."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Path label
+
+        # Navigation bar
+        nav = QHBoxLayout()
+
+        self.btn_up = QPushButton("..")
+        self.btn_up.setFixedWidth(30)
+        self.btn_up.setToolTip("Go to parent directory")
+        self.btn_up.clicked.connect(lambda: self.request_go_up.emit())
+        nav.addWidget(self.btn_up)
+
+        self.btn_refresh = QPushButton("Refresh")
+        self.btn_refresh.setFixedWidth(60)
+        self.btn_refresh.clicked.connect(lambda: self.request_refresh.emit())
+        nav.addWidget(self.btn_refresh)
+
         self.path_label = QLabel("Remote: /")
-        self.path_label.setStyleSheet("font-weight: bold; padding: 5px;")
-        layout.addWidget(self.path_label)
-        
+        self.path_label.setStyleSheet("font-weight: bold; padding: 2px 5px;")
+        nav.addWidget(self.path_label, stretch=1)
+
+        layout.addLayout(nav)
+
         # File table
         self.table = QTableWidget()
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["Name", "Type", "Size", "Modified"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.verticalHeader().setVisible(False)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
         self.table.itemDoubleClicked.connect(self._on_item_double_clicked)
-        
+
         layout.addWidget(self.table)
-    
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def set_path(self, path: str):
-        """Set current path."""
         self.current_path = path
         self.path_label.setText(f"Remote: {path}")
         self.path_changed.emit(path)
-    
+
     def set_entries(self, entries: list[RemoteEntry]):
-        """
-        Display directory entries in the table.
-        
-        Args:
-            entries: List of RemoteEntry objects
-        """
-        self.entries = entries
-        self.table.setRowCount(len(entries))
-        
-        for row, entry in enumerate(entries):
-            # Name
+        self.entries = sorted(entries, key=lambda e: (not e.is_dir, e.name.lower()))
+        self.table.setRowCount(len(self.entries))
+
+        for row, entry in enumerate(self.entries):
             name_item = QTableWidgetItem(entry.name)
+            name_item.setData(Qt.UserRole, entry)
             if entry.is_dir:
-                name_item.setData(Qt.UserRole, entry)
-                # Make directories bold
                 font = name_item.font()
                 font.setBold(True)
                 name_item.setFont(font)
-            else:
-                name_item.setData(Qt.UserRole, entry)
             self.table.setItem(row, 0, name_item)
-            
-            # Type
+
             type_item = QTableWidgetItem("DIR" if entry.is_dir else "FILE")
             self.table.setItem(row, 1, type_item)
-            
-            # Size
+
             size_str = self._format_size(entry.size) if not entry.is_dir else ""
             size_item = QTableWidgetItem(size_str)
             size_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.table.setItem(row, 2, size_item)
-            
-            # Modified time
+
             mtime_str = entry.mtime_datetime.strftime("%Y-%m-%d %H:%M:%S")
-            mtime_item = QTableWidgetItem(mtime_str)
-            self.table.setItem(row, 3, mtime_item)
-        
-        # Resize columns to content
+            self.table.setItem(row, 3, QTableWidgetItem(mtime_str))
+
         self.table.resizeColumnsToContents()
-    
+
     def clear(self):
-        """Clear the table."""
         self.table.setRowCount(0)
         self.entries = []
-    
-    def get_selected_entry(self) -> Optional[RemoteEntry]:
-        """Get the currently selected entry."""
-        selected_rows = self.table.selectedIndexes()
-        if not selected_rows:
-            return None
-        
-        row = selected_rows[0].row()
-        name_item = self.table.item(row, 0)
-        if name_item:
-            return name_item.data(Qt.UserRole)
-        return None
-    
+
+    def get_selected_entries(self) -> list[RemoteEntry]:
+        """Return all selected RemoteEntry objects."""
+        rows = {idx.row() for idx in self.table.selectedIndexes()}
+        result = []
+        for row in sorted(rows):
+            item = self.table.item(row, 0)
+            if item:
+                entry = item.data(Qt.UserRole)
+                if entry:
+                    result.append(entry)
+        return result
+
+    # ------------------------------------------------------------------
+    # Context menu
+    # ------------------------------------------------------------------
+
+    def _show_context_menu(self, pos):
+        menu = QMenu(self)
+
+        act_refresh = menu.addAction("Refresh")
+        act_refresh.triggered.connect(lambda: self.request_refresh.emit())
+
+        menu.addSeparator()
+
+        act_upload = menu.addAction("Upload here...")
+        act_upload.triggered.connect(lambda: self.request_upload.emit())
+
+        selected = self.get_selected_entries()
+
+        if len(selected) == 1:
+            entry = selected[0]
+            if not entry.is_dir:
+                act_dl = menu.addAction("Download")
+                act_dl.triggered.connect(lambda: self.request_download.emit(entry))
+            else:
+                act_dl = menu.addAction("Download folder")
+                act_dl.triggered.connect(lambda: self.request_download.emit(entry))
+
+            menu.addSeparator()
+
+            act_rename = menu.addAction("Rename")
+            act_rename.triggered.connect(lambda: self._prompt_rename(entry))
+
+            act_delete = menu.addAction("Delete")
+            act_delete.triggered.connect(lambda: self._confirm_delete(entry))
+
+        menu.addSeparator()
+        act_mkdir = menu.addAction("New Folder")
+        act_mkdir.triggered.connect(self._prompt_mkdir)
+
+        menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _prompt_mkdir(self):
+        name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
+        if ok and name.strip():
+            self.request_mkdir.emit(name.strip())
+
+    def _prompt_rename(self, entry: RemoteEntry):
+        new_name, ok = QInputDialog.getText(
+            self, "Rename", "New name:", text=entry.name
+        )
+        if ok and new_name.strip() and new_name.strip() != entry.name:
+            self.request_rename.emit(entry, new_name.strip())
+
+    def _confirm_delete(self, entry: RemoteEntry):
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete",
+            f"Delete '{entry.name}'?\n\nThis operation is restricted to the sandbox directory.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            self.request_delete.emit(entry)
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
     def _on_item_double_clicked(self, item: QTableWidgetItem):
-        """Handle double-click on an item."""
         row = item.row()
         name_item = self.table.item(row, 0)
         if name_item:
             entry = name_item.data(Qt.UserRole)
             if entry:
                 self.entry_activated.emit(entry)
-    
+
     @staticmethod
     def _format_size(size: int) -> str:
-        """Format file size in human-readable form."""
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        for unit in ["B", "KB", "MB", "GB", "TB"]:
             if size < 1024.0:
                 return f"{size:.1f} {unit}"
             size /= 1024.0
