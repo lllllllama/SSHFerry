@@ -10,8 +10,8 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -19,8 +19,8 @@ from PySide6.QtWidgets import (
 from src.shared.models import RemoteEntry
 
 
-class DraggableTableWidget(QTableWidget):
-    """TableWidget with drag support for remote file entries."""
+class DraggableTreeWidget(QTreeWidget):
+    """TreeWidget with drag support for remote file entries."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -29,18 +29,16 @@ class DraggableTableWidget(QTableWidget):
 
     def startDrag(self, supportedActions):
         """Start a drag operation with remote paths."""
-        selected_rows = set(idx.row() for idx in self.selectedIndexes())
-        if not selected_rows:
+        selected_items = self.selectedItems()
+        if not selected_items:
             return
 
-        # Collect remote paths from selected rows
+        # Collect remote paths from selected items
         paths = []
-        for row in selected_rows:
-            name_item = self.item(row, 0)
-            if name_item:
-                entry = name_item.data(Qt.UserRole)
-                if entry:
-                    paths.append(entry.path)
+        for item in selected_items:
+            entry = item.data(0, Qt.UserRole)
+            if entry:
+                paths.append(entry.path)
 
         if not paths:
             return
@@ -57,26 +55,28 @@ class DraggableTableWidget(QTableWidget):
 
 
 class RemotePanel(QWidget):
-    """Panel for displaying and navigating remote directory contents with drag-drop support."""
+    """Panel for displaying and navigating remote directory contents with drag-drop and tree support."""
 
-    path_changed = Signal(str)  # Emitted when current path changes
-    entry_activated = Signal(RemoteEntry)  # Emitted when entry is double-clicked
-
-    # File operation requests (handled by MainWindow)
+    path_changed = Signal(str)  # Emitted when current path changes (root of view)
+    entry_activated = Signal(RemoteEntry)  # Emitted when file is double-clicked
+    
+    # Request signals
     request_go_up = Signal()
     request_refresh = Signal()
-    request_mkdir = Signal(str)  # new dir name
+    request_mkdir = Signal(str, object)  # new dir name, parent item
     request_delete = Signal(RemoteEntry)
     request_rename = Signal(RemoteEntry, str)  # entry, new_name
     request_upload = Signal()  # upload selected local files to current remote dir
-    request_upload_paths = Signal(list)  # upload specific local paths (from drag-drop)
+    request_upload_paths = Signal(list, object)  # upload specific local paths (from drag-drop), target item
     request_download = Signal(RemoteEntry)
     request_download_paths = Signal(list)  # download remote paths (from drag-drop)
+    
+    # New signal for lazy loading
+    request_expand = Signal(str, QTreeWidgetItem)  # path, item to populate
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_path = "/"
-        self.entries: list[RemoteEntry] = []
         self._init_ui()
 
     def _init_ui(self):
@@ -103,35 +103,37 @@ class RemotePanel(QWidget):
 
         layout.addLayout(nav)
 
-        # File table with drag support
-        self.table = DraggableTableWidget()
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Name", "Type", "Size", "Modified"])
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table.customContextMenuRequested.connect(self._show_context_menu)
-        self.table.itemDoubleClicked.connect(self._on_item_double_clicked)
+        # File tree with drag support
+        self.tree = DraggableTreeWidget()
+        self.tree.setColumnCount(4)
+        self.tree.setHeaderLabels(["Name", "Type", "Size", "Modified"])
+        self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._show_context_menu)
+        self.tree.itemExpanded.connect(self._on_item_expanded)
+        self.tree.itemDoubleClicked.connect(self._on_item_double_clicked)
+        self.tree.itemCollapsed.connect(self._on_item_collapsed)
         
-        # Improved styling (white-blue theme)
-        self.table.setAlternatingRowColors(True)
-        self.table.setStyleSheet("""
-            QTableWidget {
-                gridline-color: #e0e0e0;
+        # Adjust column widths
+        self.tree.setColumnWidth(0, 300)
+        self.tree.setColumnWidth(1, 60)
+        self.tree.setColumnWidth(2, 80)
+
+        # Improved styling
+        self.tree.setStyleSheet("""
+            QTreeWidget {
                 font-size: 13px;
                 background-color: #ffffff;
+                border: 1px solid #e0e0e0;
             }
-            QTableWidget::item {
+            QTreeWidget::item {
                 padding: 4px;
             }
-            QTableWidget::item:selected {
+            QTreeWidget::item:selected {
                 background-color: #cce4f7;
                 color: #333333;
             }
-            QTableWidget::item:hover {
+            QTreeWidget::item:hover {
                 background-color: #e5f1fb;
             }
             QHeaderView::section {
@@ -146,7 +148,7 @@ class RemotePanel(QWidget):
         # Enable drop for receiving files from local panel
         self.setAcceptDrops(True)
 
-        layout.addWidget(self.table)
+        layout.addWidget(self.tree)
 
     # ------------------------------------------------------------------
     # Public API
@@ -157,49 +159,96 @@ class RemotePanel(QWidget):
         self.path_label.setText(f"Remote: {path}")
         self.path_changed.emit(path)
 
-    def set_entries(self, entries: list[RemoteEntry]):
-        self.entries = sorted(entries, key=lambda e: (not e.is_dir, e.name.lower()))
-        self.table.setRowCount(len(self.entries))
+    def set_root_entries(self, entries: list[RemoteEntry]):
+        """Populate the root level of the tree."""
+        self.tree.clear()
+        self.populate_node(self.tree.invisibleRootItem(), entries)
 
-        for row, entry in enumerate(self.entries):
-            # Add folder/file icon prefix
-            icon = "📁 " if entry.is_dir else "📄 "
-            name_item = QTableWidgetItem(f"{icon}{entry.name}")
-            name_item.setData(Qt.UserRole, entry)
+    def populate_node(self, item: QTreeWidgetItem, entries: list[RemoteEntry]):
+        """Populate a specific node with entries."""
+        # Clear existing children (usually the 'loading' dummy)
+        item.takeChildren()
+
+        sorted_entries = sorted(entries, key=lambda e: (not e.is_dir, e.name.lower()))
+
+        for entry in sorted_entries:
+            # Create item
+            child = QTreeWidgetItem(item)
+            
+            # Name & Icon
+            icon = "📁" if entry.is_dir else "📄"
+            child.setText(0, f"{icon} {entry.name}")
+            child.setFont(0, self._get_font(bold=entry.is_dir))
+            
+            # Metadata
+            child.setText(1, "DIR" if entry.is_dir else "FILE")
+            child.setText(2, self._format_size(entry.size) if not entry.is_dir else "")
+            child.setText(3, entry.mtime_datetime.strftime("%Y-%m-%d %H:%M:%S"))
+            
+            # Store data
+            child.setData(0, Qt.UserRole, entry)
+
+            # If directory, add dummy child to enable expansion indicator
             if entry.is_dir:
-                font = name_item.font()
-                font.setBold(True)
-                name_item.setFont(font)
-            self.table.setItem(row, 0, name_item)
-
-            type_item = QTableWidgetItem("DIR" if entry.is_dir else "FILE")
-            self.table.setItem(row, 1, type_item)
-
-            size_str = self._format_size(entry.size) if not entry.is_dir else ""
-            size_item = QTableWidgetItem(size_str)
-            size_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.table.setItem(row, 2, size_item)
-
-            mtime_str = entry.mtime_datetime.strftime("%Y-%m-%d %H:%M:%S")
-            self.table.setItem(row, 3, QTableWidgetItem(mtime_str))
-
-        self.table.resizeColumnsToContents()
-
-    def clear(self):
-        self.table.setRowCount(0)
-        self.entries = []
+                dummy = QTreeWidgetItem(child)
+                dummy.setText(0, "Loading...")
+                child.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
 
     def get_selected_entries(self) -> list[RemoteEntry]:
         """Return all selected RemoteEntry objects."""
-        rows = {idx.row() for idx in self.table.selectedIndexes()}
         result = []
-        for row in sorted(rows):
-            item = self.table.item(row, 0)
-            if item:
-                entry = item.data(Qt.UserRole)
-                if entry:
-                    result.append(entry)
+        for item in self.tree.selectedItems():
+            entry = item.data(0, Qt.UserRole)
+            if entry:
+                result.append(entry)
         return result
+
+    def get_current_target_dir(self) -> str:
+        """Get the directory path implied by selection, or root."""
+        selected = self.tree.selectedItems()
+        if selected:
+            item = selected[0]
+            entry = item.data(0, Qt.UserRole)
+            if entry.is_dir:
+                return entry.path
+            else:
+                # Use parent directory
+                parent = item.parent()
+                if parent:
+                    p_entry = parent.data(0, Qt.UserRole)
+                    if p_entry:
+                        return p_entry.path
+        return self.current_path
+
+    # ------------------------------------------------------------------
+    # Tree Interaction
+    # ------------------------------------------------------------------
+
+    def _on_item_expanded(self, item: QTreeWidgetItem):
+        """Handle item expansion - lazy load."""
+        # Check if first child is dummy
+        if item.childCount() == 1 and item.child(0).text(0) == "Loading...":
+            entry = item.data(0, Qt.UserRole)
+            if entry and entry.is_dir:
+                self.request_expand.emit(entry.path, item)
+
+    def _on_item_collapsed(self, item: QTreeWidgetItem):
+        """Handle item collapse - can be used to free memory if needed."""
+        # For now, we keep loaded items to avoid re-fetching
+        pass
+
+    def _on_item_double_clicked(self, item: QTreeWidgetItem, column: int):
+        """Handle double click."""
+        entry = item.data(0, Qt.UserRole)
+        if entry:
+            if not entry.is_dir:
+                self.entry_activated.emit(entry)
+            # Directories automatically expand/collapse via default QTreeWidget behavior
+
+    def _get_font(self, bold=False):
+        font = self.tree.font()
+        font.setBold(bold)
+        return font
 
     # ------------------------------------------------------------------
     # Context menu
@@ -213,10 +262,13 @@ class RemotePanel(QWidget):
 
         menu.addSeparator()
 
+        selected = self.get_selected_entries()
+        
+        # Determine context parent
+        target_item = self.tree.itemAt(pos)
+        
         act_upload = menu.addAction("Upload here...")
         act_upload.triggered.connect(lambda: self.request_upload.emit())
-
-        selected = self.get_selected_entries()
 
         if len(selected) == 1:
             entry = selected[0]
@@ -237,14 +289,14 @@ class RemotePanel(QWidget):
 
         menu.addSeparator()
         act_mkdir = menu.addAction("New Folder")
-        act_mkdir.triggered.connect(self._prompt_mkdir)
+        act_mkdir.triggered.connect(lambda: self._prompt_mkdir(target_item))
 
-        menu.exec(self.table.viewport().mapToGlobal(pos))
+        menu.exec(self.tree.viewport().mapToGlobal(pos))
 
-    def _prompt_mkdir(self):
+    def _prompt_mkdir(self, parent_item: QTreeWidgetItem = None):
         name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
         if ok and name.strip():
-            self.request_mkdir.emit(name.strip())
+            self.request_mkdir.emit(name.strip(), parent_item)
 
     def _prompt_rename(self, entry: RemoteEntry):
         new_name, ok = QInputDialog.getText(
@@ -263,18 +315,6 @@ class RemotePanel(QWidget):
         )
         if reply == QMessageBox.Yes:
             self.request_delete.emit(entry)
-
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
-
-    def _on_item_double_clicked(self, item: QTableWidgetItem):
-        row = item.row()
-        name_item = self.table.item(row, 0)
-        if name_item:
-            entry = name_item.data(Qt.UserRole)
-            if entry:
-                self.entry_activated.emit(entry)
 
     @staticmethod
     def _format_size(size: int) -> str:
@@ -308,6 +348,8 @@ class RemotePanel(QWidget):
             urls = event.mimeData().urls()
             paths = [url.toLocalFile() for url in urls if url.isLocalFile()]
             if paths:
-                self.request_upload_paths.emit(paths)
+                # Find target item
+                target_item = self.tree.itemAt(event.pos())
+                self.request_upload_paths.emit(paths, target_item)
             event.acceptProposedAction()
 
