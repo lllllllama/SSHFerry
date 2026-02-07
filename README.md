@@ -1,109 +1,99 @@
 # SSHFerry
 
-SSH/SFTP GUI file management and transfer tool built with Python, PySide6, and Paramiko.
+[中文](README_zh.md) | English
 
-## Features
+**SSHFerry** is a professional, high-performance GUI tool for SSH/SFTP file management and transfer, built with Python and PySide6. Designed for efficiency and security, it streamlines your remote file operations with a modern interface and smart transfer logic.
 
-- **Site Management**: Add and manage multiple SSH sites with connection profiles
-- **SSH Command Parser**: Quickly import site configuration from SSH command strings
-- **Connection Self-Check**: Comprehensive connection validation (TCP, SSH, SFTP, remote_root read/write)
-- **Remote File Browser**: Navigate and view remote directory contents
-- **Task Scheduler**: Queue and manage file transfer tasks with progress tracking
-- **Sandbox Security**: All operations are restricted to the configured `remote_root` directory
-- **Task Center**: Monitor upload/download tasks with real-time progress updates
+---
 
-## Requirements
+## ✨ Key Features
 
-- Python 3.11+
-- PySide6 6.6.0+
-- Paramiko 3.4.0+
+### 🚀 Smart Transfer System
+- **Intelligent Skipping**: Automatically detects if a file already exists with the same size and skips the transfer to save time.
+- **Auto-Resolution**: Handles file conflicts smartly by automatically renaming new files (e.g., `data_1.csv`) if a different version exists, preventing accidental overwrites.
+- **Recursive Operations**: Seamlessly uploads and downloads entire folder structures.
 
-## Installation
+### 💻 robust Site Management
+- **Profile Manager**: Organize and save multiple server connections with ease.
+- **Instant Import**: Quickly add sites by pasting standard SSH commands (e.g., `ssh -p 22 user@hostname`).
+- **Connection Doctor**: Built-in self-check tool that validates 5 critical points (TCP, SSH, SFTP, Read/Write permissions) to diagnose connection issues instantly.
 
-1. Clone the repository
-2. Install dependencies:
+### 🛡️ Sandbox Security
+- **Root Locking**: Restricts all file operations to a specified `remote_root` directory. This "sandbox" ensures you never accidentally modify or delete critical system files outside your designated workspace.
 
-```bash
-pip install -r requirements.txt
-```
+### ⚡ Performance & Engines
+- **Standard SFTP**: Reliable, compliant transfer using the Paramiko implementation.
+- **MSCP Ready**: Support for the MSCP acceleration engine for high-bandwidth environments (requires separate binary).
 
-## Usage
+### 📊 Task Control Center
+- **Visual Monitoring**: Track progress, transfer speeds, and completion status in real-time.
+- **Queue System**: Multi-threaded scheduler manages concurrent uploads and downloads efficiently.
 
-### Windows
+---
 
-```bash
-run.bat
-```
+## 🛠️ Requirements
 
-### Linux/Mac
+- **Python**: 3.11+
+- **Core Libraries**:
+  - `PySide6` (6.6.0+) for the GUI
+  - `Paramiko` (3.4.0+) for SSH/SFTP protocols
 
-```bash
-chmod +x run.sh
-./run.sh
-```
+## 📦 Installation
 
-Or run directly:
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/yourusername/SSHFerry.git
+   cd SSHFerry
+   ```
 
-```bash
+2. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+## 🚀 Usage
+
+### Starting the Application
+
+**Windows**
+```powershell
+./run.bat
+# Or directly via Python
 python -m src.app.main
 ```
 
-## Project Structure
+**Linux / macOS**
+```bash
+chmod +x run.sh
+./run.sh
+# Or directly via Python
+python3 -m src.app.main
+```
+
+### Quick Start
+1. **Add a Source**: Click "New Site" or paste an SSH command string.
+2. **Connect**: Double-click the site profile. The "Connection Doctor" will verify access.
+3. **Transfer**:
+   - **Upload**: Drag files from your OS file explorer into the SSHFerry window (coming soon) or use the "Upload" button.
+   - **Download**: Right-click remote files and select "Download".
+4. **Monitor**: Watch the "Task Center" tab for progress details.
+
+---
+
+## 🏗️ Project Structure
 
 ```
 SSHFerry/
 ├── src/
-│   ├── app/           # Application entry point
-│   ├── core/          # Core business logic (scheduler)
-│   ├── engines/       # SFTP engine for file operations
-│   ├── services/      # Services (connection checker)
-│   ├── shared/        # Shared utilities (models, errors, paths, logging)
-│   └── ui/            # GUI components
-│       ├── panels/    # UI panels (remote panel, task center)
-│       └── widgets/   # UI widgets (site editor)
-├── tests/             # Unit tests
-├── tools/             # External tools (mscp binaries - not included)
-├── pyproject.toml     # Project configuration
-├── requirements.txt   # Python dependencies
-└── README.md          # This file
+│   ├── app/           # Entry point & Config
+│   ├── core/          # Scheduler & Task Logic
+│   ├── engines/       # Transfer Engines (SFTP, MSCP)
+│   ├── shared/        # Utils, Logging, Constants
+│   └── ui/            # PySide6 Widgets & Windows
+├── tests/             # Pytest Unit Tests
+└── run.bat / run.sh   # Launch Scripts
 ```
 
-## Features Implemented
+## 📜 License
 
-### ✅ Core Functionality
-
-- [x] Site configuration with SSH/SFTP connection
-- [x] SSH command parser (e.g., `ssh -p 16921 root@host.com`)
-- [x] Connection self-check (5 checks: TCP, SSH, SFTP, remote_root readable/writable)
-- [x] Remote file browser with directory navigation
-- [x] Task scheduler with state machine (pending → running → done/failed/canceled)
-- [x] Task center UI with real-time progress tracking
-- [x] Sandbox path validation (prevent operations outside remote_root)
-- [x] SFTP engine for file operations
-
-### 🚧 Future Enhancements
-
-- [ ] MSCP engine integration for faster transfers
-- [ ] Drag-and-drop file upload/download
-- [ ] Context menu operations (delete, rename, mkdir)
-- [ ] Site configuration persistence (save/load from file)
-- [ ] Local file browser panel
-- [ ] File filtering and search
-- [ ] Transfer speed limiting
-- [ ] Resume support for interrupted transfers
-
-## Security
-
-All remote operations are sandboxed to the configured `remote_root` directory. The `ensure_in_sandbox()` function validates all paths before any dangerous operations (rm, rmdir, rename, mkdir, upload, download).
-
-## Testing
-
-Run unit tests:
-
-```bash
-pytest tests/
-```
-
-## License
-
-This project is for educational and personal use.
+This project is intended for educational and personal use.
