@@ -71,11 +71,20 @@ class Task:
     bytes_total: int
 
     bytes_done: int = 0
-    status: str = "pending"  # pending, running, paused, done, failed, canceled
+    status: str = "pending"  # pending, running, paused, done, failed, canceled, skipped
     retries: int = 0
     error_code: Optional[ErrorCode] = None
     error_message: Optional[str] = None
     checkpoint_path: Optional[str] = None  # For mscp resume
+    start_time: Optional[float] = None  # Unix timestamp when task started
+    speed: float = 0.0  # Current transfer speed in bytes/sec
+    interrupted: bool = False  # Flag for graceful interruption
+    skipped: bool = False  # File already exists and is complete
+    
+    # Folder task aggregation fields
+    subtask_count: int = 0  # Total number of files in folder
+    subtask_done: int = 0   # Number of completed files
+    current_file: str = ""  # Currently processing file name
 
     @property
     def progress_percent(self) -> float:

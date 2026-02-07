@@ -101,19 +101,159 @@ class RemoteOpThread(QThread):
 # ---------------------------------------------------------------------------
 
 class MainWindow(QMainWindow):
+    # Class variable to track window count for naming
+    _window_count = 0
+    
     def __init__(self):
         super().__init__()
+        MainWindow._window_count += 1
+        self._window_number = MainWindow._window_count
+        
         self.logger = setup_logger()
         self.sites: List[SiteConfig] = []
         self.current_site: Optional[SiteConfig] = None
         self.scheduler: Optional[TaskScheduler] = None
         self.site_store = SiteStore()
+        self.window_manager = None  # Set by WindowManager
 
         # Keep references to background threads so they aren't GC'd
         self._bg_threads: List[QThread] = []
 
-        self.setWindowTitle("SSHFerry - SSH/SFTP File Manager")
+        self.setWindowTitle(f"SSHFerry #{self._window_number}")
         self.resize(1400, 850)
+
+        # Apply modern white-blue stylesheet
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #f5f7fa;
+            }
+            QWidget {
+                background-color: #ffffff;
+                color: #333333;
+                font-family: 'Segoe UI', Arial, sans-serif;
+                font-size: 13px;
+            }
+            QPushButton {
+                background-color: #0078d4;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: 500;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #106ebe;
+                border: 1px solid #0078d4;
+            }
+            QPushButton:pressed {
+                background-color: #005a9e;
+                padding: 9px 15px 7px 17px;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #888888;
+            }
+            /* Secondary/outline buttons */
+            QPushButton[flat="true"] {
+                background-color: transparent;
+                color: #0078d4;
+                border: 1px solid #0078d4;
+            }
+            QPushButton[flat="true"]:hover {
+                background-color: #e5f1fb;
+            }
+            QLineEdit, QComboBox {
+                background-color: #ffffff;
+                border: 1px solid #d0d0d0;
+                border-radius: 4px;
+                padding: 6px 10px;
+                color: #333333;
+                min-height: 20px;
+            }
+            QLineEdit:focus, QComboBox:focus {
+                border-color: #0078d4;
+                border-width: 2px;
+            }
+            QComboBox:hover {
+                border-color: #0078d4;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 24px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #ffffff;
+                border: 1px solid #d0d0d0;
+                selection-background-color: #cce4f7;
+                selection-color: #333333;
+                padding: 4px;
+            }
+            QComboBox QAbstractItemView::item {
+                padding: 6px 10px;
+                min-height: 24px;
+            }
+            QComboBox QAbstractItemView::item:hover {
+                background-color: #e5f1fb;
+            }
+            /* Tooltips */
+            QToolTip {
+                background-color: #333333;
+                color: #ffffff;
+                border: none;
+                padding: 6px 10px;
+                border-radius: 4px;
+            }
+            QListWidget, QTableWidget, QTreeView {
+                background-color: #ffffff;
+                border: 1px solid #e0e0e0;
+                border-radius: 4px;
+                alternate-background-color: #f8f9fa;
+            }
+            QListWidget::item:selected, QTableWidget::item:selected, QTreeView::item:selected {
+                background-color: #cce4f7;
+                color: #333333;
+            }
+            QListWidget::item:hover, QTableWidget::item:hover {
+                background-color: #e5f1fb;
+            }
+            QLabel {
+                color: #333333;
+                background-color: transparent;
+            }
+            QSplitter::handle {
+                background-color: #e0e0e0;
+            }
+            QHeaderView::section {
+                background-color: #f0f4f8;
+                color: #333333;
+                padding: 8px;
+                border: 1px solid #e0e0e0;
+                font-weight: bold;
+            }
+            QScrollBar:vertical {
+                background-color: #f5f5f5;
+                width: 12px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #c0c0c0;
+                border-radius: 6px;
+                min-height: 30px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #0078d4;
+            }
+            QStatusBar {
+                background-color: #0078d4;
+                color: white;
+            }
+            QTextEdit {
+                background-color: #ffffff;
+                border: 1px solid #e0e0e0;
+                border-radius: 4px;
+            }
+        """)
 
         self._init_ui()
         self._load_saved_sites()
@@ -206,10 +346,38 @@ class MainWindow(QMainWindow):
 
         # Status bar
         self.setStatusBar(QStatusBar())
+        
+        # Menu bar
+        self._create_menu_bar()
 
         # Task refresh timer
         self._task_timer = QTimer()
         self._task_timer.timeout.connect(self._refresh_tasks)
+
+    def _create_menu_bar(self):
+        """Create the application menu bar."""
+        menu_bar = self.menuBar()
+        
+        # File menu
+        file_menu = menu_bar.addMenu("&File")
+        
+        # New Window action
+        new_window_action = file_menu.addAction("&New Window")
+        new_window_action.setShortcut("Ctrl+N")
+        new_window_action.triggered.connect(self._new_window)
+        
+        file_menu.addSeparator()
+        
+        # Close Window action
+        close_action = file_menu.addAction("&Close Window")
+        close_action.setShortcut("Ctrl+W")
+        close_action.triggered.connect(self.close)
+
+    def _new_window(self):
+        """Create a new window."""
+        if self.window_manager:
+            self.window_manager.create_window()
+            self._log(f"Opened new window #{MainWindow._window_count}")
 
     # ------------------------------------------------------------------
     # Site management
@@ -330,6 +498,7 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Error", msg)
 
     def _on_remote_entry_activated(self, entry: RemoteEntry):
+        self._log(f"Activated: {entry.path} (is_dir={entry.is_dir})")
         if entry.is_dir:
             self._list_remote_dir(entry.path)
         else:
@@ -436,22 +605,46 @@ class MainWindow(QMainWindow):
                 self._enqueue_dir_upload(local_path, remote_dir)
 
     def _enqueue_dir_upload(self, local_dir: str, remote_parent: str):
-        """Recursively enqueue upload tasks for a directory."""
+        """Create a single folder upload task for the entire directory."""
         dir_name = os.path.basename(local_dir)
         remote_dir = join_remote_path(remote_parent, dir_name)
-        # Create mkdir task first
-        task = TaskScheduler.create_mkdir_task(remote_dir)
-        self.scheduler.add_task(task)
+        
+        # Scan folder to get file count and total size
+        total_files, total_bytes = self._scan_local_dir(local_dir)
+        
+        if total_files > 0:
+            task = TaskScheduler.create_folder_upload_task(
+                local_dir, remote_dir, total_files, total_bytes
+            )
+            self.scheduler.add_task(task)
+            self._log(f"Queued folder upload: {dir_name} ({total_files} files, {self._format_size(total_bytes)})")
+        else:
+            # Empty folder - just create mkdir task
+            task = TaskScheduler.create_mkdir_task(remote_dir)
+            self.scheduler.add_task(task)
 
-        for name in os.listdir(local_dir):
-            full = os.path.join(local_dir, name)
+    def _scan_local_dir(self, path: str) -> tuple:
+        """Recursively count files and total bytes in a local directory."""
+        total_files = 0
+        total_bytes = 0
+        for name in os.listdir(path):
+            full = os.path.join(path, name)
             if os.path.isfile(full):
-                remote_path = join_remote_path(remote_dir, name)
-                size = os.path.getsize(full)
-                task = TaskScheduler.create_upload_task(full, remote_path, size)
-                self.scheduler.add_task(task)
+                total_files += 1
+                total_bytes += os.path.getsize(full)
             elif os.path.isdir(full):
-                self._enqueue_dir_upload(full, remote_dir)
+                sub_files, sub_bytes = self._scan_local_dir(full)
+                total_files += sub_files
+                total_bytes += sub_bytes
+        return total_files, total_bytes
+
+    def _format_size(self, size: int) -> str:
+        """Format size in human readable format."""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size < 1024:
+                return f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} TB"
 
     def _download_entry(self, entry: RemoteEntry):
         if not self._ensure_site() or not self.scheduler:
@@ -503,22 +696,33 @@ class MainWindow(QMainWindow):
                 self._log(f"Queued download (drag): {name} -> {local_path}")
 
     def _enqueue_dir_download(self, remote_dir: str, local_parent: str):
-        """Recursively enqueue download tasks for a remote directory."""
-        # We need to list the remote dir first (in a thread), then enqueue.
+        """Create a single folder download task for the remote directory."""
+        # We need to scan the remote dir first (in a thread) to count files
         t = ListDirThread(self.current_site, remote_dir)
 
         def on_listed(path, entries):
             dir_name = os.path.basename(remote_dir)
             local_dir = os.path.join(local_parent, dir_name)
-            os.makedirs(local_dir, exist_ok=True)
-
-            for ent in entries:
-                if ent.is_dir:
-                    self._enqueue_dir_download(ent.path, local_dir)
-                else:
-                    local_path = os.path.join(local_dir, ent.name)
-                    task = TaskScheduler.create_download_task(ent.path, local_path, ent.size)
-                    self.scheduler.add_task(task)
+            
+            # Count files and total size (non-recursive for now, scheduler handles recursion)
+            total_files = 0
+            total_bytes = 0
+            
+            def count_entries(ents):
+                nonlocal total_files, total_bytes
+                for ent in ents:
+                    if not ent.is_dir:
+                        total_files += 1
+                        total_bytes += ent.size
+            
+            count_entries(entries)
+            
+            if total_files > 0 or any(e.is_dir for e in entries):
+                task = TaskScheduler.create_folder_download_task(
+                    remote_dir, local_dir, max(1, total_files), total_bytes
+                )
+                self.scheduler.add_task(task)
+                self._log(f"Queued folder download: {dir_name} ({total_files} files, {self._format_size(total_bytes)})")
 
         t.list_completed.connect(on_listed)
         t.list_failed.connect(lambda p, m: self._log(f"Download list failed: {m}"))

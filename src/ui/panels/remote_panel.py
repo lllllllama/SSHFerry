@@ -115,6 +115,33 @@ class RemotePanel(QWidget):
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
         self.table.itemDoubleClicked.connect(self._on_item_double_clicked)
+        
+        # Improved styling (white-blue theme)
+        self.table.setAlternatingRowColors(True)
+        self.table.setStyleSheet("""
+            QTableWidget {
+                gridline-color: #e0e0e0;
+                font-size: 13px;
+                background-color: #ffffff;
+            }
+            QTableWidget::item {
+                padding: 4px;
+            }
+            QTableWidget::item:selected {
+                background-color: #cce4f7;
+                color: #333333;
+            }
+            QTableWidget::item:hover {
+                background-color: #e5f1fb;
+            }
+            QHeaderView::section {
+                background-color: #f0f4f8;
+                padding: 6px;
+                font-weight: bold;
+                border: 1px solid #e0e0e0;
+                color: #333333;
+            }
+        """)
 
         # Enable drop for receiving files from local panel
         self.setAcceptDrops(True)
@@ -135,7 +162,9 @@ class RemotePanel(QWidget):
         self.table.setRowCount(len(self.entries))
 
         for row, entry in enumerate(self.entries):
-            name_item = QTableWidgetItem(entry.name)
+            # Add folder/file icon prefix
+            icon = "📁 " if entry.is_dir else "📄 "
+            name_item = QTableWidgetItem(f"{icon}{entry.name}")
             name_item.setData(Qt.UserRole, entry)
             if entry.is_dir:
                 font = name_item.font()

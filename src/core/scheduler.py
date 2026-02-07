@@ -127,15 +127,13 @@ class TaskScheduler:
 
             if task.status == "pending":
                 task.status = "canceled"
-                self.logger.info(f"Canceled pending task {task_id}")
+                self.logger.info(f"Canceled pending task {task_id[:8]}")
                 return True
             elif task.status == "running":
-                # Try to cancel the future
-                future = self.futures.get(task_id)
-                if future and future.cancel():
-                    task.status = "canceled"
-                    self.logger.info(f"Canceled running task {task_id}")
-                    return True
+                # Set interrupted flag for graceful cancellation
+                task.interrupted = True
+                self.logger.info(f"Interrupting running task {task_id[:8]}")
+                return True
 
         return False
 
@@ -170,6 +168,7 @@ class TaskScheduler:
         """
         with self.task_lock:
             task.status = "running"
+            task.start_time = time.time()  # Track start time for speed calculation
 
         log_task_event(
             self.logger,
@@ -196,6 +195,10 @@ class TaskScheduler:
                     self._execute_mscp_download(task)
                 else:
                     self._execute_download(task)
+            elif task.kind == "folder_upload":
+                self._execute_folder_upload(task)
+            elif task.kind == "folder_download":
+                self._execute_folder_download(task)
             elif task.kind == "delete":
                 self._execute_delete(task)
             elif task.kind == "mkdir":
@@ -251,34 +254,126 @@ class TaskScheduler:
             )
 
     def _execute_upload(self, task: Task):
-        """Execute upload task."""
+        """Execute upload task with smart file detection."""
         engine = SftpEngine(self.site_config, self.logger)
         engine.connect()
 
-        def progress_callback(bytes_transferred, bytes_total):
-            with self.task_lock:
-                task.bytes_done = bytes_transferred
-                task.bytes_total = bytes_total
-
         try:
-            engine.upload_file(task.src, task.dst, callback=progress_callback)
+            local_size = os.path.getsize(task.src)
+            original_dst = task.dst
+            
+            # Check if file already exists at destination
+            try:
+                remote_stat = engine.stat(task.dst)
+                if remote_stat.size == local_size:
+                    # File exists and is complete - skip
+                    with self.task_lock:
+                        task.skipped = True
+                        task.status = "skipped"
+                        task.bytes_done = local_size
+                    self.logger.info(f"Skipped (exists): {os.path.basename(task.src)}")
+                    return
+                else:
+                    # File exists but different size - rename with sequence
+                    task.dst = self._get_unique_remote_path(engine, original_dst)
+                    self.logger.info(f"Renamed: {original_dst} -> {task.dst}")
+            except:
+                pass  # File doesn't exist, proceed normally
+
+            def progress_callback(bytes_transferred, bytes_total):
+                with self.task_lock:
+                    task.bytes_done = bytes_transferred
+                    task.bytes_total = bytes_total
+                    if task.start_time:
+                        elapsed = time.time() - task.start_time
+                        if elapsed > 0:
+                            task.speed = bytes_transferred / elapsed
+
+            def check_interrupt():
+                return task.interrupted
+
+            engine.upload_file(task.src, task.dst, callback=progress_callback, check_interrupt=check_interrupt)
+        except InterruptedError:
+            with self.task_lock:
+                task.status = "canceled"
+            self.logger.info(f"Canceled: {os.path.basename(task.src)}")
         finally:
             engine.disconnect()
+
+    def _get_unique_remote_path(self, engine: SftpEngine, remote_path: str) -> str:
+        """Generate unique remote path by adding sequence number."""
+        base, ext = os.path.splitext(remote_path)
+        counter = 1
+        new_path = f"{base}_{counter}{ext}"
+        
+        while True:
+            try:
+                engine.stat(new_path)
+                counter += 1
+                new_path = f"{base}_{counter}{ext}"
+            except:
+                return new_path
 
     def _execute_download(self, task: Task):
-        """Execute download task."""
+        """Execute download task with smart file detection."""
         engine = SftpEngine(self.site_config, self.logger)
         engine.connect()
 
-        def progress_callback(bytes_transferred, bytes_total):
-            with self.task_lock:
-                task.bytes_done = bytes_transferred
-                task.bytes_total = bytes_total
-
         try:
-            engine.download_file(task.src, task.dst, callback=progress_callback)
+            # Get remote file size
+            try:
+                remote_stat = engine.stat(task.src)
+                remote_size = remote_stat.size
+            except:
+                remote_size = task.bytes_total
+            
+            # Check if local file already exists
+            if os.path.exists(task.dst):
+                local_size = os.path.getsize(task.dst)
+                if local_size == remote_size:
+                    # File exists and is complete - skip
+                    with self.task_lock:
+                        task.skipped = True
+                        task.status = "skipped"
+                        task.bytes_done = remote_size
+                    self.logger.info(f"Skipped (exists): {os.path.basename(task.dst)}")
+                    return
+                else:
+                    # File exists but different size - rename with sequence
+                    task.dst = self._get_unique_local_path(task.dst)
+                    self.logger.info(f"Local renamed: {task.dst}")
+
+            def progress_callback(bytes_transferred, bytes_total):
+                with self.task_lock:
+                    task.bytes_done = bytes_transferred
+                    task.bytes_total = bytes_total
+                    if task.start_time:
+                        elapsed = time.time() - task.start_time
+                        if elapsed > 0:
+                            task.speed = bytes_transferred / elapsed
+
+            def check_interrupt():
+                return task.interrupted
+
+            engine.download_file(task.src, task.dst, callback=progress_callback, check_interrupt=check_interrupt)
+        except InterruptedError:
+            with self.task_lock:
+                task.status = "canceled"
+            self.logger.info(f"Canceled: {os.path.basename(task.src)}")
         finally:
             engine.disconnect()
+
+    def _get_unique_local_path(self, local_path: str) -> str:
+        """Generate unique local path by adding sequence number."""
+        base, ext = os.path.splitext(local_path)
+        counter = 1
+        new_path = f"{base}_{counter}{ext}"
+        
+        while os.path.exists(new_path):
+            counter += 1
+            new_path = f"{base}_{counter}{ext}"
+        
+        return new_path
 
     def _execute_mscp_upload(self, task: Task):
         """Execute upload task using MSCP engine."""
@@ -351,6 +446,92 @@ class TaskScheduler:
             engine.rename(task.src, task.dst)
         finally:
             engine.disconnect()
+
+    def _execute_folder_upload(self, task: Task):
+        """Execute folder upload task - uploads all files as single aggregated task."""
+        engine = SftpEngine(self.site_config, self.logger)
+        engine.connect()
+        
+        try:
+            self._upload_dir_recursive(engine, task, task.src, task.dst)
+        finally:
+            engine.disconnect()
+
+    def _upload_dir_recursive(self, engine: SftpEngine, task: Task, local_dir: str, remote_dir: str):
+        """Recursively upload a directory, updating task progress."""
+        # Create remote directory
+        try:
+            engine.mkdir(remote_dir)
+        except:
+            pass  # Directory may already exist
+        
+        for name in os.listdir(local_dir):
+            full_path = os.path.join(local_dir, name)
+            remote_path = f"{remote_dir}/{name}"
+            
+            if os.path.isfile(full_path):
+                file_size = os.path.getsize(full_path)
+                
+                with self.task_lock:
+                    task.current_file = name
+                
+                # Upload with progress callback
+                def progress_callback(bytes_transferred, bytes_total):
+                    with self.task_lock:
+                        # Calculate overall progress
+                        base_bytes = task.bytes_done
+                        task.speed = bytes_transferred / max(1, time.time() - task.start_time) if task.start_time else 0
+                
+                engine.upload_file(full_path, remote_path, callback=progress_callback)
+                
+                with self.task_lock:
+                    task.subtask_done += 1
+                    task.bytes_done += file_size
+                    # Log file completion
+                self.logger.info(f"[{task.subtask_done}/{task.subtask_count}] Uploaded: {name}")
+                
+            elif os.path.isdir(full_path):
+                self._upload_dir_recursive(engine, task, full_path, remote_path)
+
+    def _execute_folder_download(self, task: Task):
+        """Execute folder download task - downloads all files as single aggregated task."""
+        engine = SftpEngine(self.site_config, self.logger)
+        engine.connect()
+        
+        try:
+            self._download_dir_recursive(engine, task, task.src, task.dst)
+        finally:
+            engine.disconnect()
+
+    def _download_dir_recursive(self, engine: SftpEngine, task: Task, remote_dir: str, local_dir: str):
+        """Recursively download a directory, updating task progress."""
+        # Create local directory
+        os.makedirs(local_dir, exist_ok=True)
+        
+        # List remote directory
+        entries = engine.list_dir(remote_dir)
+        
+        for entry in entries:
+            local_path = os.path.join(local_dir, entry.name)
+            
+            if entry.is_dir:
+                self._download_dir_recursive(engine, task, entry.path, local_path)
+            else:
+                with self.task_lock:
+                    task.current_file = entry.name
+                
+                # Download with progress callback
+                def progress_callback(bytes_transferred, bytes_total):
+                    with self.task_lock:
+                        task.speed = bytes_transferred / max(1, time.time() - task.start_time) if task.start_time else 0
+                
+                engine.download_file(entry.path, local_path, callback=progress_callback)
+                
+                with self.task_lock:
+                    task.subtask_done += 1
+                    task.bytes_done += entry.size
+                    
+                self.logger.info(f"[{task.subtask_done}/{task.subtask_count}] Downloaded: {entry.name}")
 
     @staticmethod
     def create_upload_task(
@@ -445,5 +626,45 @@ class TaskScheduler:
             src=remote_path,
             dst="",
             bytes_total=0,
+            status="pending"
+        )
+
+    @staticmethod
+    def create_folder_upload_task(
+        local_dir: str,
+        remote_dir: str,
+        total_files: int,
+        total_bytes: int,
+        engine: str = "sftp"
+    ) -> Task:
+        """Create a folder upload task."""
+        return Task(
+            task_id=str(uuid.uuid4()),
+            kind="folder_upload",
+            engine=engine,
+            src=local_dir,
+            dst=remote_dir,
+            bytes_total=total_bytes,
+            subtask_count=total_files,
+            status="pending"
+        )
+
+    @staticmethod
+    def create_folder_download_task(
+        remote_dir: str,
+        local_dir: str,
+        total_files: int,
+        total_bytes: int,
+        engine: str = "sftp"
+    ) -> Task:
+        """Create a folder download task."""
+        return Task(
+            task_id=str(uuid.uuid4()),
+            kind="folder_download",
+            engine=engine,
+            src=remote_dir,
+            dst=local_dir,
+            bytes_total=total_bytes,
+            subtask_count=total_files,
             status="pending"
         )

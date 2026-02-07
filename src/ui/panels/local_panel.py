@@ -1,11 +1,13 @@
 """Local file system panel using QFileSystemModel."""
 import os
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QDir, QMimeData, QModelIndex, Qt, QUrl, Signal
 from PySide6.QtGui import QDrag
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QFileSystemModel,
     QHBoxLayout,
     QLabel,
@@ -15,6 +17,29 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+
+def get_available_drives() -> list[str]:
+    """Get list of available drive letters on Windows."""
+    if sys.platform != "win32":
+        return ["/"]
+    
+    drives = []
+    try:
+        import ctypes
+        bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+        for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            if bitmask & 1:
+                drives.append(f"{letter}:/")
+            bitmask >>= 1
+    except Exception:
+        # Fallback: check common drive letters
+        for letter in "CDEFGHIJ":
+            drive = f"{letter}:/"
+            if os.path.exists(drive):
+                drives.append(drive)
+    
+    return drives if drives else ["C:/"]
 
 
 class DraggableTreeView(QTreeView):
@@ -78,6 +103,15 @@ class LocalPanel(QWidget):
 
         # Navigation bar
         nav = QHBoxLayout()
+        
+        # Drive selector (Windows)
+        self.drive_combo = QComboBox()
+        self.drive_combo.setFixedWidth(60)
+        self.drive_combo.setToolTip("Select drive")
+        self._populate_drives()
+        self.drive_combo.currentTextChanged.connect(self._on_drive_changed)
+        nav.addWidget(self.drive_combo)
+        
         self.btn_up = QPushButton("..")
         self.btn_up.setFixedWidth(30)
         self.btn_up.setToolTip("Go to parent directory")
@@ -148,6 +182,36 @@ class LocalPanel(QWidget):
         self.path_edit.setText(path)
         self.tree.setRootIndex(self.model.index(path))
         self.dir_changed.emit(path)
+        # Sync drive combo selection
+        self._sync_drive_combo()
+
+    def _populate_drives(self):
+        """Populate drive selector with available drives."""
+        self.drive_combo.blockSignals(True)
+        self.drive_combo.clear()
+        drives = get_available_drives()
+        for drive in drives:
+            self.drive_combo.addItem(drive.rstrip("/"))
+        # Select current drive
+        self._sync_drive_combo()
+        self.drive_combo.blockSignals(False)
+
+    def _sync_drive_combo(self):
+        """Sync drive combo to current directory."""
+        if sys.platform == "win32" and len(self.current_dir) >= 2:
+            drive = self.current_dir[:2].upper()
+            idx = self.drive_combo.findText(drive)
+            if idx >= 0:
+                self.drive_combo.blockSignals(True)
+                self.drive_combo.setCurrentIndex(idx)
+                self.drive_combo.blockSignals(False)
+
+    def _on_drive_changed(self, drive: str):
+        """Navigate to selected drive root."""
+        if drive:
+            drive_path = f"{drive}/"
+            if os.path.isdir(drive_path):
+                self._navigate_to(drive_path)
 
     def get_selected_paths(self) -> list[str]:
         """Return list of full paths for all selected items."""

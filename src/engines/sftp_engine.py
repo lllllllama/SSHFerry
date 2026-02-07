@@ -229,15 +229,17 @@ class SftpEngine:
         self,
         local_path: str,
         remote_path: str,
-        callback: Optional[Callable] = None
+        callback: Optional[Callable] = None,
+        check_interrupt: Optional[Callable] = None
     ) -> None:
         """
-        Upload a file to remote server.
+        Upload a file to remote server with interrupt support.
         
         Args:
             local_path: Local file path
             remote_path: Remote destination path
             callback: Optional progress callback(bytes_transferred, bytes_total)
+            check_interrupt: Optional function that returns True if transfer should stop
         """
         if not self.is_connected():
             raise SSHFerryError(ErrorCode.REMOTE_DISCONNECT, "Not connected")
@@ -246,8 +248,30 @@ class SftpEngine:
         normalized_path = normalize_remote_path(remote_path)
 
         try:
-            self.sftp_client.put(local_path, normalized_path, callback=callback)
+            file_size = os.path.getsize(local_path)
+            chunk_size = 32768  # 32KB chunks
+            bytes_transferred = 0
+            
+            with open(local_path, 'rb') as local_file:
+                with self.sftp_client.open(normalized_path, 'wb') as remote_file:
+                    while True:
+                        # Check for interruption
+                        if check_interrupt and check_interrupt():
+                            raise InterruptedError("Transfer interrupted")
+                        
+                        chunk = local_file.read(chunk_size)
+                        if not chunk:
+                            break
+                        
+                        remote_file.write(chunk)
+                        bytes_transferred += len(chunk)
+                        
+                        if callback:
+                            callback(bytes_transferred, file_size)
+            
             self.logger.info(f"Uploaded {local_path} -> {normalized_path}")
+        except InterruptedError:
+            raise
         except Exception as e:
             raise SSHFerryError(ErrorCode.UNKNOWN_ERROR, f"Failed to upload file: {e}")
 
@@ -255,15 +279,17 @@ class SftpEngine:
         self,
         remote_path: str,
         local_path: str,
-        callback: Optional[Callable] = None
+        callback: Optional[Callable] = None,
+        check_interrupt: Optional[Callable] = None
     ) -> None:
         """
-        Download a file from remote server.
+        Download a file from remote server with interrupt support.
         
         Args:
             remote_path: Remote file path
             local_path: Local destination path
             callback: Optional progress callback(bytes_transferred, bytes_total)
+            check_interrupt: Optional function that returns True if transfer should stop
         """
         if not self.is_connected():
             raise SSHFerryError(ErrorCode.REMOTE_DISCONNECT, "Not connected")
@@ -274,8 +300,33 @@ class SftpEngine:
         try:
             # Ensure local directory exists
             Path(local_path).parent.mkdir(parents=True, exist_ok=True)
-            self.sftp_client.get(normalized_path, local_path, callback=callback)
+            
+            # Get remote file size
+            attr = self.sftp_client.stat(normalized_path)
+            file_size = attr.st_size or 0
+            chunk_size = 32768  # 32KB chunks
+            bytes_transferred = 0
+            
+            with self.sftp_client.open(normalized_path, 'rb') as remote_file:
+                with open(local_path, 'wb') as local_file:
+                    while True:
+                        # Check for interruption
+                        if check_interrupt and check_interrupt():
+                            raise InterruptedError("Transfer interrupted")
+                        
+                        chunk = remote_file.read(chunk_size)
+                        if not chunk:
+                            break
+                        
+                        local_file.write(chunk)
+                        bytes_transferred += len(chunk)
+                        
+                        if callback:
+                            callback(bytes_transferred, file_size)
+            
             self.logger.info(f"Downloaded {normalized_path} -> {local_path}")
+        except InterruptedError:
+            raise
         except Exception as e:
             raise SSHFerryError(ErrorCode.UNKNOWN_ERROR, f"Failed to download file: {e}")
 
