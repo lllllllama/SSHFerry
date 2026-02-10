@@ -1,99 +1,100 @@
-# SSHFerry
+# SSHFerry ✨
 
 [中文](README_zh.md) | English
 
-**SSHFerry** is a professional, high-performance GUI tool for SSH/SFTP file management and transfer, built with Python and PySide6. Designed for efficiency and security, it streamlines your remote file operations with a modern interface and smart transfer logic.
+SSHFerry is a desktop GUI for SSH/SFTP file operations, built with Python + PySide6.
+It focuses on three goals: **safe remote operations**, **practical transfer behavior**, and **clear task visibility**.
 
----
+## 🚀 Highlights
 
-## ✨ Key Features
+- 🛡️ Sandbox-protected remote operations (`remote_root`)
+- 📦 File and folder upload/download (recursive)
+- ⏯️ Resume/skip-aware transfer behavior
+- 🧪 Built-in connection checker (TCP/SSH/SFTP/read/write)
+- 📊 Task center with pause/resume/cancel/restart
+- ⚡ Optional `mscp` acceleration with fallback to parallel SFTP
 
-### 🚀 Smart Transfer System
-- **Intelligent Skipping**: Automatically detects if a file already exists with the same size and skips the transfer to save time.
-- **Auto-Resolution**: Handles file conflicts smartly by automatically renaming new files (e.g., `data_1.csv`) if a different version exists, preventing accidental overwrites.
-- **Recursive Operations**: Seamlessly uploads and downloads entire folder structures.
+## 📌 Current Scope
 
-### 💻 robust Site Management
-- **Profile Manager**: Organize and save multiple server connections with ease.
-- **Instant Import**: Quickly add sites by pasting standard SSH commands (e.g., `ssh -p 22 user@hostname`).
-- **Connection Doctor**: Built-in self-check tool that validates 5 critical points (TCP, SSH, SFTP, Read/Write permissions) to diagnose connection issues instantly.
+- Runtime: Python `3.11+`
+- GUI: `PySide6`
+- Protocol: `Paramiko` (SSH/SFTP)
+- Engines:
+  - `sftp` (default)
+  - `mscp` (optional external binary)
+- Task states:
+  - `pending`, `running`, `paused`, `done`, `failed`, `canceled`, `skipped`
 
-### 🛡️ Sandbox Security
-- **Root Locking**: Restricts all file operations to a specified `remote_root` directory. This "sandbox" ensures you never accidentally modify or delete critical system files outside your designated workspace.
+## 🧭 Quick Start
 
-### ⚡ Performance & Engines
-- **Standard SFTP**: Reliable, compliant transfer using the Paramiko implementation.
-- **MSCP Ready**: Support for the MSCP acceleration engine for high-bandwidth environments (requires separate binary).
+1. Add a site (manual form or paste SSH command).
+2. Set `remote_root` (required sandbox root).
+3. Run connection check.
+4. Connect and browse remote tree.
+5. Upload/download files or folders.
+6. Monitor and control tasks in Task Center.
 
-### 📊 Task Control Center
-- **Visual Monitoring**: Track progress, transfer speeds, and completion status in real-time.
-- **Queue System**: Multi-threaded scheduler manages concurrent uploads and downloads efficiently.
+## 📦 Install
 
----
+```bash
+pip install -r requirements.txt
+```
 
-## 🛠️ Requirements
+## ▶️ Run
 
-- **Python**: 3.11+
-- **Core Libraries**:
-  - `PySide6` (6.6.0+) for the GUI
-  - `Paramiko` (3.4.0+) for SSH/SFTP protocols
+### Windows
 
-## 📦 Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/yourusername/SSHFerry.git
-   cd SSHFerry
-   ```
-
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-## 🚀 Usage
-
-### Starting the Application
-
-**Windows**
 ```powershell
 ./run.bat
-# Or directly via Python
+# or
 python -m src.app.main
 ```
 
-**Linux / macOS**
+### Linux / macOS
+
 ```bash
 chmod +x run.sh
 ./run.sh
-# Or directly via Python
+# or
 python3 -m src.app.main
 ```
 
-### Quick Start
-1. **Add a Source**: Click "New Site" or paste an SSH command string.
-2. **Connect**: Double-click the site profile. The "Connection Doctor" will verify access.
-3. **Transfer**:
-   - **Upload**: Drag files from your OS file explorer into the SSHFerry window (coming soon) or use the "Upload" button.
-   - **Download**: Right-click remote files and select "Download".
-4. **Monitor**: Watch the "Task Center" tab for progress details.
+## ✅ Functional Verification
 
----
+### Automated checks
 
-## 🏗️ Project Structure
-
-```
-SSHFerry/
-├── src/
-│   ├── app/           # Entry point & Config
-│   ├── core/          # Scheduler & Task Logic
-│   ├── engines/       # Transfer Engines (SFTP, MSCP)
-│   ├── shared/        # Utils, Logging, Constants
-│   └── ui/            # PySide6 Widgets & Windows
-├── tests/             # Pytest Unit Tests
-└── run.bat / run.sh   # Launch Scripts
+```bash
+pytest -q
 ```
 
-## 📜 License
+```bash
+python -c "from src.shared.errors import ErrorCode; from src.shared.models import SiteConfig, Task; from src.shared.paths import normalize_remote_path, ensure_in_sandbox; from src.engines.sftp_engine import SftpEngine; from src.core.scheduler import TaskScheduler; from src.services.connection_checker import ConnectionChecker; print('imports_ok')"
+```
 
-This project is intended for educational and personal use.
+### Suggested manual checks
+
+1. Connect with a dedicated sandbox path.
+2. Upload the same file twice; verify second attempt is `skipped`.
+3. Interrupt a large transfer, retry, and verify resume behavior.
+4. Drag remote files into local panel; verify download tasks are created.
+5. Attempt an operation outside sandbox; verify it is blocked.
+
+## 🗂️ Project Layout
+
+```text
+src/
+  app/        # Entry point
+  core/       # Scheduler and task logic
+  engines/    # SFTP / parallel SFTP / MSCP
+  services/   # Site storage, connection checks, metrics
+  shared/     # Models, errors, path sandboxing, logging
+  ui/         # Main window and panels
+
+tests/        # Pytest test suite
+```
+
+## 📝 Notes
+
+- `mscp` acceleration requires an external binary.
+- Passwords are runtime-only and not persisted by `SiteStore`.
+- Current positioning: personal and educational use.

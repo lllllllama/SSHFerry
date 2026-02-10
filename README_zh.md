@@ -1,99 +1,100 @@
-# SSHFerry
+# SSHFerry ✨
 
 中文 | [English](README.md)
 
-**SSHFerry** 是一款基于 Python 和 PySide6 构建的专业 SSH/SFTP 图形化文件管理与传输工具。它拥有现代化的用户界面和智能传输逻辑，旨在为您提供更加高效、安全的文件运维体验。
+SSHFerry 是一个基于 Python + PySide6 的 SSH/SFTP 桌面图形工具。
+核心目标是三点：**远程操作安全**、**传输行为实用**、**任务状态可观测**。
 
----
+## 🚀 亮点能力
 
-## ✨ 核心功能
+- 🛡️ 基于 `remote_root` 的远程沙箱保护
+- 📦 文件与文件夹上传/下载（支持递归）
+- ⏯️ 续传与跳过策略（断点续传、同尺寸跳过）
+- 🧪 内置连接检查（TCP/SSH/SFTP/读写）
+- 📊 任务中心支持暂停/恢复/取消/重试
+- ⚡ 可选 `mscp` 加速（不可用时回退并行 SFTP）
 
-### 🚀 智能传输系统
-- **智能跳过**: 如果目标位置已存在大小相同的文件，系统会自动跳过传输，节省时间。
-- **冲突自动解决**: 当遇到同名但内容不同（大小不同）的文件时，会自动重命名新文件（例如 `data_1.csv`），彻底杜绝意外覆盖数据的风险。
-- **递归操作**: 支持对复杂的文件夹结构进行完整的递归上传与下载。
+## 📌 当前范围
 
-### 💻 强大的站点管理
-- **配置文件管理**: 轻松保存和组织多个服务器连接配置。
-- **快速导入**: 支持直接粘贴标准 SSH 命令（如 `ssh -p 22 user@hostname`）来快速解析并添加站点。
-- **连接诊断医生**: 内置连接自检工具，可一键验证 5 个关键指标（TCP连通性、SSH认证、SFTP服务、读权限、写权限），瞬间定位连接问题。
+- 运行环境：Python `3.11+`
+- GUI：`PySide6`
+- 协议：`Paramiko`（SSH/SFTP）
+- 引擎：
+  - `sftp`（默认）
+  - `mscp`（可选外部二进制）
+- 任务状态：
+  - `pending`、`running`、`paused`、`done`、`failed`、`canceled`、`skipped`
 
-### 🛡️ 沙箱安全机制
-- **根目录锁定**: 所有文件操作均被严格限制在配置的 `remote_root` 目录下。这种“沙箱”机制确保您永远不会误删或修改工作区以外的关键系统文件。
+## 🧭 快速上手
 
-### ⚡ 高性能引擎
-- **标准 SFTP**: 基于 Paramiko 实现的稳定、兼容的 SFTP 传输。
-- **MSCP 加速支持**: 集成 MSCP 高速传输引擎接口（需额外二进制文件），适应高带宽环境下的极速传输需求。
+1. 添加站点（表单填写或粘贴 SSH 命令）。
+2. 配置 `remote_root`（必填，作为沙箱根目录）。
+3. 执行连接自检。
+4. 连接后浏览远程目录树。
+5. 上传/下载文件或文件夹。
+6. 在任务中心监控并控制任务。
 
-### 📊 任务控制中心
-- **可视化监控**: 实时跟踪任务进度、传输速度和完成状态。
-- **队列系统**: 多线程调度器高效管理并发的上传与下载任务。
+## 📦 安装
 
----
+```bash
+pip install -r requirements.txt
+```
 
-## 🛠️ 环境要求
+## ▶️ 启动
 
-- **Python**: 3.11+
-- **核心依赖**:
-  - `PySide6` (6.6.0+) - 用于构建 GUI
-  - `Paramiko` (3.4.0+) - 用于 SSH/SFTP 协议支持
+### Windows
 
-## 📦 安装说明
-
-1. **克隆仓库**
-   ```bash
-   git clone https://github.com/yourusername/SSHFerry.git
-   cd SSHFerry
-   ```
-
-2. **安装依赖**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-## 🚀 使用指南
-
-### 启动应用
-
-**Windows**
 ```powershell
 ./run.bat
-# 或直接通过 Python 运行
+# 或
 python -m src.app.main
 ```
 
-**Linux / macOS**
+### Linux / macOS
+
 ```bash
 chmod +x run.sh
 ./run.sh
-# 或直接通过 Python 运行
+# 或
 python3 -m src.app.main
 ```
 
-### 快速上手
-1. **添加站点**: 点击“新建站点”或直接粘贴 SSH 命令字符串。
-2. **连接**: 双击站点配置卡片，“连接诊断医生”将自动验证连接可用性。
-3. **传输文件**:
-   - **上传**: 使用“上传”按钮选择本地文件发送至服务器。
-   - **下载**: 右键点击远程文件并选择“下载”。
-4. **监控**: 在“任务中心”选项卡中查看所有任务的实时进度。
+## ✅ 功能验证
 
----
+### 自动化验证
 
-## 🏗️ 项目结构
-
-```
-SSHFerry/
-├── src/
-│   ├── app/           # 程序入口与配置
-│   ├── core/          # 调度器与核心任务逻辑
-│   ├── engines/       # 传输引擎 (SFTP, MSCP)
-│   ├── shared/        # 工具类、日志、常量定义
-│   └── ui/            # PySide6 界面组件
-├── tests/             # Pytest 单元测试
-└── run.bat / run.sh   # 启动脚本
+```bash
+pytest -q
 ```
 
-## 📜 许可证
+```bash
+python -c "from src.shared.errors import ErrorCode; from src.shared.models import SiteConfig, Task; from src.shared.paths import normalize_remote_path, ensure_in_sandbox; from src.engines.sftp_engine import SftpEngine; from src.core.scheduler import TaskScheduler; from src.services.connection_checker import ConnectionChecker; print('imports_ok')"
+```
 
-本项目仅供学习与个人使用。
+### 建议手工验证
+
+1. 使用独立沙箱目录连接测试主机。
+2. 同一文件上传两次，确认第二次状态为 `skipped`。
+3. 中断大文件传输后重试，确认续传生效。
+4. 将远程文件拖拽到本地面板，确认创建下载任务。
+5. 尝试对沙箱外路径操作，确认被拦截。
+
+## 🗂️ 项目结构
+
+```text
+src/
+  app/        # 入口
+  core/       # 调度器与任务逻辑
+  engines/    # SFTP / 并行 SFTP / MSCP
+  services/   # 站点存储、连接检查、指标统计
+  shared/     # 模型、错误、路径沙箱、日志
+  ui/         # 主窗口与各面板
+
+tests/        # Pytest 测试集
+```
+
+## 📝 说明
+
+- `mscp` 加速依赖外部可执行文件。
+- 密码为运行时信息，不会通过 `SiteStore` 持久化。
+- 当前项目定位为个人与学习用途。
