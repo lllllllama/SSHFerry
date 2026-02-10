@@ -3,7 +3,7 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QDir, QMimeData, QModelIndex, Qt, QUrl, Signal
+from PySide6.QtCore import QDir, QMimeData, QModelIndex, QTimer, Qt, QUrl, Signal
 from PySide6.QtGui import QDrag
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -89,6 +89,12 @@ class LocalPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_dir = str(Path.home())
+        self._drag_anim_phase = 0
+        self._drag_anim_active = False
+        self._drag_colors = ["#cce4f7", "#a9dcff"]
+        self._drag_timer = QTimer(self)
+        self._drag_timer.timeout.connect(self._on_drag_anim_tick)
+        self._base_tree_style = ""
         self._init_ui()
 
     def _init_ui(self):
@@ -147,6 +153,7 @@ class LocalPanel(QWidget):
 
         # Hide unnecessary columns (keep Name, Size, Date Modified)
         self.tree.setColumnHidden(2, True)  # Type column
+        self._base_tree_style = self.tree.styleSheet()
 
         # Enable drop for receiving files from remote
         self.setAcceptDrops(True)
@@ -224,16 +231,74 @@ class LocalPanel(QWidget):
     # Drag-drop support for receiving downloads
     def dragEnterEvent(self, event):
         if event.mimeData().hasFormat("application/x-sshferry-remote"):
+            self._start_drag_animation()
             event.acceptProposedAction()
 
     def dragMoveEvent(self, event):
         if event.mimeData().hasFormat("application/x-sshferry-remote"):
+            self._set_drag_target_from_pos(event.pos())
             event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event):
+        self._stop_drag_animation()
+        event.accept()
 
     def dropEvent(self, event):
         if event.mimeData().hasFormat("application/x-sshferry-remote"):
             data = event.mimeData().data("application/x-sshferry-remote")
             paths = data.data().decode("utf-8").split("\n")
             self.files_dropped.emit(paths)
+            self._stop_drag_animation()
             event.acceptProposedAction()
+
+    def _target_index_from_pos(self, panel_pos):
+        """Map panel coordinates to tree index for directory target."""
+        viewport_pos = self.tree.viewport().mapFrom(self, panel_pos)
+        idx = self.tree.indexAt(viewport_pos)
+        if not idx.isValid():
+            return self.tree.rootIndex()
+
+        path = self.model.filePath(idx)
+        if os.path.isfile(path):
+            return idx.parent()
+        return idx
+
+    def _set_drag_target_from_pos(self, panel_pos):
+        """Highlight hovered target directory during drag."""
+        idx = self._target_index_from_pos(panel_pos)
+        if idx.isValid():
+            self.tree.setCurrentIndex(idx)
+            self._start_drag_animation()
+
+    def _start_drag_animation(self):
+        """Start pulsing selected-directory highlight."""
+        if self._drag_anim_active:
+            return
+        self._drag_anim_active = True
+        self._drag_anim_phase = 0
+        self._apply_drag_selection_color(self._drag_colors[self._drag_anim_phase])
+        self._drag_timer.start(160)
+
+    def _stop_drag_animation(self):
+        """Stop pulsing highlight and restore style."""
+        self._drag_timer.stop()
+        self._drag_anim_active = False
+        self.tree.setStyleSheet(self._base_tree_style)
+        self.tree.clearSelection()
+
+    def _on_drag_anim_tick(self):
+        """Pulse selected color while dragging."""
+        if not self._drag_anim_active:
+            return
+        self._drag_anim_phase = (self._drag_anim_phase + 1) % len(self._drag_colors)
+        self._apply_drag_selection_color(self._drag_colors[self._drag_anim_phase])
+
+    def _apply_drag_selection_color(self, color: str):
+        """Apply temporary selected-item color for drag feedback."""
+        override = (
+            "\nQTreeView::item:selected {"
+            f"background-color: {color};"
+            "}\n"
+        )
+        self.tree.setStyleSheet((self._base_tree_style or "") + override)
 

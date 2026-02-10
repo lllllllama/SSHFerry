@@ -1,6 +1,6 @@
 """Remote file panel for displaying remote directory contents."""
 
-from PySide6.QtCore import QByteArray, QMimeData, Qt, Signal
+from PySide6.QtCore import QByteArray, QMimeData, QTimer, Qt, Signal
 from PySide6.QtGui import QDrag
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -73,10 +73,17 @@ class RemotePanel(QWidget):
     
     # New signal for lazy loading
     request_expand = Signal(str, QTreeWidgetItem)  # path, item to populate
+    ROLE_EMPTY_LOADED = Qt.UserRole + 1
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_path = "/"
+        self._drag_anim_phase = 0
+        self._drag_anim_active = False
+        self._drag_colors = ["#cce4f7", "#a9dcff"]
+        self._drag_timer = QTimer(self)
+        self._drag_timer.timeout.connect(self._on_drag_anim_tick)
+        self._base_tree_stylesheet = ""
         self._init_ui()
 
     def _init_ui(self):
@@ -120,7 +127,7 @@ class RemotePanel(QWidget):
         self.tree.setColumnWidth(2, 80)
 
         # Improved styling
-        self.tree.setStyleSheet("""
+        self._base_tree_stylesheet = """
             QTreeWidget {
                 font-size: 13px;
                 background-color: #ffffff;
@@ -143,7 +150,8 @@ class RemotePanel(QWidget):
                 border: 1px solid #e0e0e0;
                 color: #333333;
             }
-        """)
+        """
+        self.tree.setStyleSheet(self._base_tree_stylesheet)
 
         # Enable drop for receiving files from local panel
         self.setAcceptDrops(True)
@@ -168,6 +176,7 @@ class RemotePanel(QWidget):
         """Populate a specific node with entries."""
         # Clear existing children (usually the 'loading' dummy)
         item.takeChildren()
+        item.setData(0, self.ROLE_EMPTY_LOADED, False)
 
         sorted_entries = sorted(entries, key=lambda e: (not e.is_dir, e.name.lower()))
 
@@ -193,6 +202,14 @@ class RemotePanel(QWidget):
                 dummy = QTreeWidgetItem(child)
                 dummy.setText(0, "Loading...")
                 child.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
+
+        # Keep an expansion handle for empty folders so users can collapse back.
+        if item != self.tree.invisibleRootItem() and not sorted_entries:
+            empty = QTreeWidgetItem(item)
+            empty.setText(0, "(empty)")
+            empty.setDisabled(True)
+            item.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
+            item.setData(0, self.ROLE_EMPTY_LOADED, True)
 
     def get_selected_entries(self) -> list[RemoteEntry]:
         """Return all selected RemoteEntry objects."""
@@ -234,8 +251,13 @@ class RemotePanel(QWidget):
 
     def _on_item_collapsed(self, item: QTreeWidgetItem):
         """Handle item collapse - can be used to free memory if needed."""
-        # For now, we keep loaded items to avoid re-fetching
-        pass
+        # For empty folder, collapse back to unopened state.
+        if item.data(0, self.ROLE_EMPTY_LOADED):
+            item.takeChildren()
+            loading = QTreeWidgetItem(item)
+            loading.setText(0, "Loading...")
+            item.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
+            item.setData(0, self.ROLE_EMPTY_LOADED, False)
 
     def _on_item_double_clicked(self, item: QTreeWidgetItem, column: int):
         """Handle double click."""
@@ -322,6 +344,7 @@ class RemotePanel(QWidget):
     def dragEnterEvent(self, event):
         """Accept drag events with file URLs."""
         if event.mimeData().hasUrls():
+            self._start_drag_animation()
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -329,9 +352,15 @@ class RemotePanel(QWidget):
     def dragMoveEvent(self, event):
         """Accept drag move events with file URLs."""
         if event.mimeData().hasUrls():
+            self._set_drag_target_from_pos(event.pos())
             event.acceptProposedAction()
         else:
             event.ignore()
+
+    def dragLeaveEvent(self, event):
+        """Clear drag highlight when pointer leaves widget."""
+        self._stop_drag_animation()
+        event.accept()
 
     def dropEvent(self, event):
         """Handle dropped files - emit upload request."""
@@ -340,7 +369,60 @@ class RemotePanel(QWidget):
             paths = [url.toLocalFile() for url in urls if url.isLocalFile()]
             if paths:
                 # Find target item
-                target_item = self.tree.itemAt(event.pos())
+                target_item = self._target_item_from_pos(event.pos())
                 self.request_upload_paths.emit(paths, target_item)
+            self._stop_drag_animation()
             event.acceptProposedAction()
+
+    def _target_item_from_pos(self, panel_pos):
+        """Map panel coordinates to tree target directory item."""
+        viewport_pos = self.tree.viewport().mapFrom(self, panel_pos)
+        item = self.tree.itemAt(viewport_pos)
+        if not item:
+            return None
+        entry = item.data(0, Qt.UserRole)
+        if entry and not entry.is_dir:
+            return item.parent()
+        return item
+
+    def _set_drag_target_from_pos(self, panel_pos):
+        """Highlight hovered target directory during drag."""
+        item = self._target_item_from_pos(panel_pos)
+        if item:
+            self.tree.setCurrentItem(item)
+            self._start_drag_animation()
+        else:
+            self.tree.clearSelection()
+
+    def _start_drag_animation(self):
+        """Start pulsing selected-directory highlight."""
+        if self._drag_anim_active:
+            return
+        self._drag_anim_active = True
+        self._drag_anim_phase = 0
+        self._apply_drag_selection_color(self._drag_colors[self._drag_anim_phase])
+        self._drag_timer.start(160)
+
+    def _stop_drag_animation(self):
+        """Stop pulsing highlight and restore base style."""
+        self._drag_timer.stop()
+        self._drag_anim_active = False
+        self.tree.setStyleSheet(self._base_tree_stylesheet)
+        self.tree.clearSelection()
+
+    def _on_drag_anim_tick(self):
+        """Pulse selected color while dragging."""
+        if not self._drag_anim_active:
+            return
+        self._drag_anim_phase = (self._drag_anim_phase + 1) % len(self._drag_colors)
+        self._apply_drag_selection_color(self._drag_colors[self._drag_anim_phase])
+
+    def _apply_drag_selection_color(self, color: str):
+        """Apply temporary selected-item color for drag feedback."""
+        override = (
+            "\nQTreeWidget::item:selected {"
+            f"background-color: {color}; color: #333333;"
+            "}\n"
+        )
+        self.tree.setStyleSheet(self._base_tree_stylesheet + override)
 
