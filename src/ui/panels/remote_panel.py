@@ -285,7 +285,7 @@ class RemotePanel(QWidget):
             act_rename.triggered.connect(lambda: self._prompt_rename(entry))
 
             act_delete = menu.addAction("Delete")
-            act_delete.triggered.connect(lambda: self._confirm_delete(entry))
+            act_delete.triggered.connect(lambda: self.request_delete.emit(entry))
 
         menu.addSeparator()
         act_mkdir = menu.addAction("New Folder")
@@ -305,16 +305,7 @@ class RemotePanel(QWidget):
         if ok and new_name.strip() and new_name.strip() != entry.name:
             self.request_rename.emit(entry, new_name.strip())
 
-    def _confirm_delete(self, entry: RemoteEntry):
-        reply = QMessageBox.question(
-            self,
-            "Confirm Delete",
-            f"Delete '{entry.name}'?\n\nThis operation is restricted to the sandbox directory.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if reply == QMessageBox.Yes:
-            self.request_delete.emit(entry)
+
 
     @staticmethod
     def _format_size(size: int) -> str:

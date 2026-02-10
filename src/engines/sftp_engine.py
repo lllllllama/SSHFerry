@@ -202,6 +202,39 @@ class SftpEngine:
         except Exception as e:
             raise SSHFerryError(ErrorCode.UNKNOWN_ERROR, f"Failed to remove directory: {e}")
 
+    def remove_dir_recursive(self, remote_path: str) -> None:
+        """
+        Recursively remove remote directory using 'rm -rf'.
+        
+        Args:
+            remote_path: Remote directory path to remove
+        """
+        if not self.is_connected():
+            raise SSHFerryError(ErrorCode.REMOTE_DISCONNECT, "Not connected")
+
+        ensure_in_sandbox(remote_path, self.site_config.remote_root)
+        normalized_path = normalize_remote_path(remote_path)
+
+        # Safety check: ensure we are not deleting root or something obviously wrong
+        if normalized_path == "/" or normalized_path == self.site_config.remote_root:
+             raise SSHFerryError(ErrorCode.UNKNOWN_ERROR, "Cannot delete root or sandbox root recursively")
+
+        try:
+            # Use SSH command for recursive delete
+            cmd = f"rm -rf '{normalized_path}'"
+            stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
+            exit_status = stdout.channel.recv_exit_status()
+            
+            if exit_status != 0:
+                err = stderr.read().decode().strip()
+                raise SSHFerryError(ErrorCode.UNKNOWN_ERROR, f"Recursive delete failed: {err}")
+                
+            self.logger.info(f"Recursively removed directory: {normalized_path}")
+        except SSHFerryError:
+            raise
+        except Exception as e:
+            raise SSHFerryError(ErrorCode.UNKNOWN_ERROR, f"Failed to recursive remove: {e}")
+
     def rename(self, old_path: str, new_path: str) -> None:
         """
         Rename/move remote file or directory.
@@ -230,7 +263,8 @@ class SftpEngine:
         local_path: str,
         remote_path: str,
         callback: Optional[Callable] = None,
-        check_interrupt: Optional[Callable] = None
+        check_interrupt: Optional[Callable] = None,
+        offset: int = 0
     ) -> None:
         """
         Upload a file to remote server with interrupt support.
@@ -240,6 +274,7 @@ class SftpEngine:
             remote_path: Remote destination path
             callback: Optional progress callback(bytes_transferred, bytes_total)
             check_interrupt: Optional function that returns True if transfer should stop
+            offset: Byte offset to resume upload from
         """
         if not self.is_connected():
             raise SSHFerryError(ErrorCode.REMOTE_DISCONNECT, "Not connected")
@@ -249,11 +284,26 @@ class SftpEngine:
 
         try:
             file_size = os.path.getsize(local_path)
-            chunk_size = 32768  # 32KB chunks
-            bytes_transferred = 0
+            chunk_size = 131072  # 128KB chunks for better speed
+            
+            # Determine mode based on offset
+            mode = 'wb'
+            if offset > 0:
+                mode = 'ab'
+                
+            bytes_transferred = offset
             
             with open(local_path, 'rb') as local_file:
-                with self.sftp_client.open(normalized_path, 'wb') as remote_file:
+                if offset > 0:
+                    local_file.seek(offset)
+                    
+                with self.sftp_client.open(normalized_path, mode) as remote_file:
+                    if offset > 0 and mode == 'wb':
+                        # Should not happen if logic is correct, but 'ab' implies append.
+                        # Some SFTP servers might not support 'ab' correctly without seek?
+                        # Paramiko's open('ab') usually handles it.
+                        remote_file.seek(offset)
+                        
                     while True:
                         # Check for interruption
                         if check_interrupt and check_interrupt():
@@ -280,7 +330,8 @@ class SftpEngine:
         remote_path: str,
         local_path: str,
         callback: Optional[Callable] = None,
-        check_interrupt: Optional[Callable] = None
+        check_interrupt: Optional[Callable] = None,
+        offset: int = 0
     ) -> None:
         """
         Download a file from remote server with interrupt support.
@@ -290,6 +341,7 @@ class SftpEngine:
             local_path: Local destination path
             callback: Optional progress callback(bytes_transferred, bytes_total)
             check_interrupt: Optional function that returns True if transfer should stop
+            offset: Byte offset to resume download from
         """
         if not self.is_connected():
             raise SSHFerryError(ErrorCode.REMOTE_DISCONNECT, "Not connected")
@@ -304,11 +356,20 @@ class SftpEngine:
             # Get remote file size
             attr = self.sftp_client.stat(normalized_path)
             file_size = attr.st_size or 0
-            chunk_size = 32768  # 32KB chunks
-            bytes_transferred = 0
+            chunk_size = 131072  # 128KB chunks
+            
+            # Determine mode based on offset
+            mode = 'wb'
+            if offset > 0:
+                mode = 'ab'
+                
+            bytes_transferred = offset
             
             with self.sftp_client.open(normalized_path, 'rb') as remote_file:
-                with open(local_path, 'wb') as local_file:
+                if offset > 0:
+                    remote_file.seek(offset)
+                    
+                with open(local_path, mode) as local_file:
                     while True:
                         # Check for interruption
                         if check_interrupt and check_interrupt():

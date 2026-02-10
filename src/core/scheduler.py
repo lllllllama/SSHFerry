@@ -9,7 +9,9 @@ from threading import Lock, Thread
 from typing import Dict, List, Optional
 
 from src.engines.mscp_engine import DEFAULT_THRESHOLD_BYTES, MscpEngine
+from src.engines.parallel_sftp_engine import ParallelSftpEngine
 from src.engines.sftp_engine import SftpEngine
+from src.services.metrics import MetricsCollector, TransferRecord
 from src.shared.errors import ErrorCode, SSHFerryError
 from src.shared.logging_ import log_task_event
 from src.shared.models import SiteConfig, Task
@@ -64,6 +66,9 @@ class TaskScheduler:
         # Scheduler thread
         self.running = False
         self.scheduler_thread: Optional[Thread] = None
+
+        # Metrics collector for adaptive preset selection
+        self.metrics = MetricsCollector()
 
     def start(self):
         """Start the scheduler."""
@@ -133,6 +138,90 @@ class TaskScheduler:
                 # Set interrupted flag for graceful cancellation
                 task.interrupted = True
                 self.logger.info(f"Interrupting running task {task_id[:8]}")
+                return True
+            elif task.status == "paused":
+                task.status = "canceled"
+                self.logger.info(f"Canceled paused task {task_id[:8]}")
+                return True
+
+        return False
+
+    def pause_task(self, task_id: str) -> bool:
+        """
+        Pause a running task.
+        
+        Args:
+            task_id: Task ID to pause
+            
+        Returns:
+            True if paused, False otherwise
+        """
+        with self.task_lock:
+            task = self.tasks.get(task_id)
+            if not task:
+                return False
+
+            if task.status == "running":
+                task.paused = True
+                self.logger.info(f"Pausing task {task_id[:8]}")
+                return True
+
+        return False
+
+    def resume_task(self, task_id: str) -> bool:
+        """
+        Resume a paused task.
+        
+        Args:
+            task_id: Task ID to resume
+            
+        Returns:
+            True if resumed, False otherwise
+        """
+        with self.task_lock:
+            task = self.tasks.get(task_id)
+            if not task:
+                return False
+
+            if task.status == "paused":
+                task.status = "pending"
+                task.paused = False
+                # Re-queue the task
+                self.task_queue.put(task_id)
+                self.logger.info(f"Resumed task {task_id[:8]}")
+                return True
+
+        return False
+
+    def restart_task(self, task_id: str) -> bool:
+        """
+        Restart a failed, canceled, or done task.
+        
+        Args:
+            task_id: Task ID to restart
+            
+        Returns:
+            True if restarted, False otherwise
+        """
+        with self.task_lock:
+            task = self.tasks.get(task_id)
+            if not task:
+                return False
+
+            if task.status in ("failed", "canceled", "done", "skipped"):
+                task.status = "pending"
+                task.bytes_done = 0
+                task.speed = 0.0
+                task.error_code = None
+                task.error_message = None
+                task.start_time = None
+                task.interrupted = False
+                task.paused = False
+                task.skipped = False
+                
+                # Re-queue the task
+                self.task_queue.put(task_id)
+                self.logger.info(f"Restarting task {task_id[:8]}")
                 return True
 
         return False
@@ -209,24 +298,50 @@ class TaskScheduler:
                 raise ValueError(f"Unknown task kind: {task.kind}")
 
             with self.task_lock:
-                task.status = "done"
-                task.bytes_done = task.bytes_total
+                # Only mark as done if it hasn't been paused/canceled/skipped
+                if task.status == "running":
+                    task.status = "done"
+                    task.end_time = time.time()
+                    task.bytes_done = task.bytes_total
+
+            # Record metrics for transfer tasks
+            if task.kind in ("upload", "download", "folder_upload", "folder_download") and task.status == "done":
+                duration = time.time() - (task.start_time or time.time())
+                self.metrics.record(TransferRecord(
+                    preset=self.mscp_preset,
+                    bytes_transferred=task.bytes_done,
+                    duration_seconds=max(0.1, duration),
+                    success=True,
+                    timestamp=time.time()
+                ))
 
             log_task_event(
                 self.logger,
                 task.task_id,
                 task.engine,
                 task.kind,
-                "done",
-                bytes_done=task.bytes_total,
+                task.status,
+                bytes_done=task.bytes_done,
                 bytes_total=task.bytes_total
             )
 
         except SSHFerryError as e:
             with self.task_lock:
                 task.status = "failed"
+                task.end_time = time.time()
                 task.error_code = e.code
                 task.error_message = e.message
+
+            # Record failed transfer metrics
+            if task.kind in ("upload", "download", "folder_upload", "folder_download"):
+                duration = time.time() - (task.start_time or time.time())
+                self.metrics.record(TransferRecord(
+                    preset=self.mscp_preset,
+                    bytes_transferred=task.bytes_done,
+                    duration_seconds=max(0.1, duration),
+                    success=False,
+                    timestamp=time.time()
+                ))
 
             log_task_event(
                 self.logger,
@@ -240,8 +355,20 @@ class TaskScheduler:
         except Exception as e:
             with self.task_lock:
                 task.status = "failed"
+                task.end_time = time.time()
                 task.error_code = ErrorCode.UNKNOWN_ERROR
                 task.error_message = str(e)
+
+            # Record failed transfer metrics
+            if task.kind in ("upload", "download", "folder_upload", "folder_download"):
+                duration = time.time() - (task.start_time or time.time())
+                self.metrics.record(TransferRecord(
+                    preset=self.mscp_preset,
+                    bytes_transferred=task.bytes_done,
+                    duration_seconds=max(0.1, duration),
+                    success=False,
+                    timestamp=time.time()
+                ))
 
             log_task_event(
                 self.logger,
@@ -263,6 +390,7 @@ class TaskScheduler:
             original_dst = task.dst
             
             # Check if file already exists at destination
+            offset = 0
             try:
                 remote_stat = engine.stat(task.dst)
                 if remote_stat.size == local_size:
@@ -273,10 +401,13 @@ class TaskScheduler:
                         task.bytes_done = local_size
                     self.logger.info(f"Skipped (exists): {os.path.basename(task.src)}")
                     return
+                elif remote_stat.size < local_size:
+                    # File exists and is smaller - resume
+                    offset = remote_stat.size
+                    self.logger.info(f"Resuming upload from {offset} bytes: {os.path.basename(task.src)}")
                 else:
-                    # File exists but different size - rename with sequence
-                    task.dst = self._get_unique_remote_path(engine, original_dst)
-                    self.logger.info(f"Renamed: {original_dst} -> {task.dst}")
+                     # File exists and is larger - overwrite (offset 0)
+                     self.logger.info(f"Overwriting larger file: {os.path.basename(task.src)}")
             except:
                 pass  # File doesn't exist, proceed normally
 
@@ -290,13 +421,22 @@ class TaskScheduler:
                             task.speed = bytes_transferred / elapsed
 
             def check_interrupt():
+                # Check for pause request
+                if task.paused:
+                    with self.task_lock:
+                        task.status = "paused"
+                    raise InterruptedError("Task paused")
                 return task.interrupted
 
-            engine.upload_file(task.src, task.dst, callback=progress_callback, check_interrupt=check_interrupt)
-        except InterruptedError:
+            engine.upload_file(task.src, task.dst, callback=progress_callback, check_interrupt=check_interrupt, offset=offset)
+        except InterruptedError as e:
             with self.task_lock:
-                task.status = "canceled"
-            self.logger.info(f"Canceled: {os.path.basename(task.src)}")
+                if task.paused:
+                    task.status = "paused"
+                    self.logger.info(f"Paused: {os.path.basename(task.src)}")
+                else:
+                    task.status = "canceled"
+                    self.logger.info(f"Canceled: {os.path.basename(task.src)}")
         finally:
             engine.disconnect()
 
@@ -328,6 +468,7 @@ class TaskScheduler:
                 remote_size = task.bytes_total
             
             # Check if local file already exists
+            offset = 0
             if os.path.exists(task.dst):
                 local_size = os.path.getsize(task.dst)
                 if local_size == remote_size:
@@ -338,10 +479,13 @@ class TaskScheduler:
                         task.bytes_done = remote_size
                     self.logger.info(f"Skipped (exists): {os.path.basename(task.dst)}")
                     return
+                elif local_size < remote_size:
+                    # File exists and is smaller - resume
+                    offset = local_size
+                    self.logger.info(f"Resuming download from {offset} bytes: {os.path.basename(task.dst)}")
                 else:
-                    # File exists but different size - rename with sequence
-                    task.dst = self._get_unique_local_path(task.dst)
-                    self.logger.info(f"Local renamed: {task.dst}")
+                    # Local is larger - overwrite
+                    self.logger.info(f"Overwriting larger local file: {os.path.basename(task.dst)}")
 
             def progress_callback(bytes_transferred, bytes_total):
                 with self.task_lock:
@@ -353,13 +497,22 @@ class TaskScheduler:
                             task.speed = bytes_transferred / elapsed
 
             def check_interrupt():
+                # Check for pause request
+                if task.paused:
+                    with self.task_lock:
+                        task.status = "paused"
+                    raise InterruptedError("Task paused")
                 return task.interrupted
 
-            engine.download_file(task.src, task.dst, callback=progress_callback, check_interrupt=check_interrupt)
-        except InterruptedError:
+            engine.download_file(task.src, task.dst, callback=progress_callback, check_interrupt=check_interrupt, offset=offset)
+        except InterruptedError as e:
             with self.task_lock:
-                task.status = "canceled"
-            self.logger.info(f"Canceled: {os.path.basename(task.src)}")
+                if task.paused:
+                    task.status = "paused"
+                    self.logger.info(f"Paused: {os.path.basename(task.src)}")
+                else:
+                    task.status = "canceled"
+                    self.logger.info(f"Canceled: {os.path.basename(task.src)}")
         finally:
             engine.disconnect()
 
@@ -376,15 +529,34 @@ class TaskScheduler:
         return new_path
 
     def _execute_mscp_upload(self, task: Task):
-        """Execute upload task using MSCP engine."""
+        """Execute upload task using MSCP engine (or fallback to Parallel SFTP)."""
         checkpoint_dir = os.path.join(
             os.path.expanduser("~"), ".sshferry", "checkpoints"
         )
         engine = MscpEngine(self.site_config, preset_name=self.mscp_preset, logger=self.logger)
         
         if not engine.is_available():
-            self.logger.warning("MSCP not available, falling back to SFTP")
-            self._execute_upload(task)
+            self.logger.warning("MSCP not available, falling back to Native Parallel SFTP")
+            
+            # Defines for callback
+            def progress_callback(bytes_transferred, bytes_total):
+                with self.task_lock:
+                    task.bytes_done = bytes_transferred
+                    task.bytes_total = bytes_total
+                    if task.start_time:
+                        elapsed = time.time() - task.start_time
+                        if elapsed > 0:
+                            task.speed = bytes_transferred / elapsed
+
+            def check_interrupt():
+                if task.paused:
+                    with self.task_lock:
+                        task.status = "paused"
+                    raise InterruptedError("Task paused")
+                return task.interrupted
+
+            p_engine = ParallelSftpEngine(self.site_config, self.logger)
+            p_engine.upload_file(task.src, task.dst, callback=progress_callback, check_interrupt=check_interrupt)
             return
         
         exit_code = engine.upload(task.src, task.dst, checkpoint_dir=checkpoint_dir)
@@ -395,15 +567,33 @@ class TaskScheduler:
             )
 
     def _execute_mscp_download(self, task: Task):
-        """Execute download task using MSCP engine."""
+        """Execute download task using MSCP engine (or fallback to Parallel SFTP)."""
         checkpoint_dir = os.path.join(
             os.path.expanduser("~"), ".sshferry", "checkpoints"
         )
         engine = MscpEngine(self.site_config, preset_name=self.mscp_preset, logger=self.logger)
         
         if not engine.is_available():
-            self.logger.warning("MSCP not available, falling back to SFTP")
-            self._execute_download(task)
+            self.logger.warning("MSCP not available, falling back to Native Parallel SFTP")
+
+            def progress_callback(bytes_transferred, bytes_total):
+                with self.task_lock:
+                    task.bytes_done = bytes_transferred
+                    task.bytes_total = bytes_total
+                    if task.start_time:
+                        elapsed = time.time() - task.start_time
+                        if elapsed > 0:
+                            task.speed = bytes_transferred / elapsed
+
+            def check_interrupt():
+                if task.paused:
+                    with self.task_lock:
+                        task.status = "paused"
+                    raise InterruptedError("Task paused")
+                return task.interrupted
+
+            p_engine = ParallelSftpEngine(self.site_config, self.logger)
+            p_engine.download_file(task.src, task.dst, callback=progress_callback, check_interrupt=check_interrupt)
             return
         
         exit_code = engine.download(task.src, task.dst, checkpoint_dir=checkpoint_dir)
@@ -454,6 +644,15 @@ class TaskScheduler:
         
         try:
             self._upload_dir_recursive(engine, task, task.src, task.dst)
+        except InterruptedError:
+            with self.task_lock:
+                if task.paused:
+                    task.status = "paused"
+                    self.logger.info(f"Paused folder upload: {os.path.basename(task.src)}")
+                else:
+                    task.status = "canceled"
+                    task.end_time = time.time()
+                    self.logger.info(f"Canceled folder upload: {os.path.basename(task.src)}")
         finally:
             engine.disconnect()
 
@@ -465,13 +664,43 @@ class TaskScheduler:
         except:
             pass  # Directory may already exist
         
+        # Helper to check for interrupts
+        def check_interrupt():
+            if task.paused:
+                with self.task_lock:
+                    task.status = "paused"
+                raise InterruptedError("Task paused")
+            return task.interrupted
+
         for name in os.listdir(local_dir):
+            if check_interrupt():
+                raise InterruptedError("Task interrupted")
+                
             full_path = os.path.join(local_dir, name)
             remote_path = f"{remote_dir}/{name}"
             
             if os.path.isfile(full_path):
                 file_size = os.path.getsize(full_path)
                 
+                # Smart Resume Check
+                offset = 0
+                skip_file = False
+                try:
+                    stats = engine.stat(remote_path)
+                    if stats.size == file_size:
+                        skip_file = True
+                    elif stats.size < file_size:
+                        offset = stats.size
+                except:
+                    pass
+
+                if skip_file:
+                    with self.task_lock:
+                        task.subtask_done += 1
+                        task.bytes_done += file_size
+                    self.logger.info(f"[{task.subtask_done}/{task.subtask_count}] Skipped (exists): {name}")
+                    continue
+
                 with self.task_lock:
                     task.current_file = name
                 
@@ -482,7 +711,10 @@ class TaskScheduler:
                         base_bytes = task.bytes_done
                         task.speed = bytes_transferred / max(1, time.time() - task.start_time) if task.start_time else 0
                 
-                engine.upload_file(full_path, remote_path, callback=progress_callback)
+                if offset > 0:
+                     self.logger.info(f"Resuming file {name} from {offset}")
+
+                engine.upload_file(full_path, remote_path, callback=progress_callback, check_interrupt=check_interrupt, offset=offset)
                 
                 with self.task_lock:
                     task.subtask_done += 1
@@ -491,6 +723,9 @@ class TaskScheduler:
                 self.logger.info(f"[{task.subtask_done}/{task.subtask_count}] Uploaded: {name}")
                 
             elif os.path.isdir(full_path):
+                # Check interrupt before recursing
+                if check_interrupt(): 
+                    raise InterruptedError("Task interrupted")
                 self._upload_dir_recursive(engine, task, full_path, remote_path)
 
     def _execute_folder_download(self, task: Task):
@@ -500,6 +735,15 @@ class TaskScheduler:
         
         try:
             self._download_dir_recursive(engine, task, task.src, task.dst)
+        except InterruptedError:
+            with self.task_lock:
+                if task.paused:
+                    task.status = "paused"
+                    self.logger.info(f"Paused folder download: {os.path.basename(task.src)}")
+                else:
+                    task.status = "canceled"
+                    task.end_time = time.time()
+                    self.logger.info(f"Canceled folder download: {os.path.basename(task.src)}")
         finally:
             engine.disconnect()
 
@@ -511,12 +755,40 @@ class TaskScheduler:
         # List remote directory
         entries = engine.list_dir(remote_dir)
         
+        # Helper to check for interrupts
+        def check_interrupt():
+            if task.paused:
+                with self.task_lock:
+                    task.status = "paused"
+                raise InterruptedError("Task paused")
+            return task.interrupted
+
         for entry in entries:
+            if check_interrupt():
+                raise InterruptedError("Task interrupted")
+
             local_path = os.path.join(local_dir, entry.name)
             
             if entry.is_dir:
                 self._download_dir_recursive(engine, task, entry.path, local_path)
             else:
+                # Smart Resume Check
+                offset = 0
+                skip_file = False
+                if os.path.exists(local_path):
+                    local_size = os.path.getsize(local_path)
+                    if local_size == entry.size:
+                        skip_file = True
+                    elif local_size < entry.size:
+                        offset = local_size
+
+                if skip_file:
+                    with self.task_lock:
+                         task.subtask_done += 1
+                         task.bytes_done += entry.size
+                    self.logger.info(f"[{task.subtask_done}/{task.subtask_count}] Skipped (exists): {entry.name}")
+                    continue
+
                 with self.task_lock:
                     task.current_file = entry.name
                 
@@ -525,7 +797,10 @@ class TaskScheduler:
                     with self.task_lock:
                         task.speed = bytes_transferred / max(1, time.time() - task.start_time) if task.start_time else 0
                 
-                engine.download_file(entry.path, local_path, callback=progress_callback)
+                if offset > 0:
+                    self.logger.info(f"Resuming file {entry.name} from {offset}")
+
+                engine.download_file(entry.path, local_path, callback=progress_callback, check_interrupt=check_interrupt, offset=offset)
                 
                 with self.task_lock:
                     task.subtask_done += 1

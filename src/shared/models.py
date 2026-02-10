@@ -77,8 +77,10 @@ class Task:
     error_message: Optional[str] = None
     checkpoint_path: Optional[str] = None  # For mscp resume
     start_time: Optional[float] = None  # Unix timestamp when task started
+    end_time: Optional[float] = None    # Unix timestamp when task finished
     speed: float = 0.0  # Current transfer speed in bytes/sec
     interrupted: bool = False  # Flag for graceful interruption
+    paused: bool = False  # Flag for graceful pause (used by scheduler)
     skipped: bool = False  # File already exists and is complete
     
     # Folder task aggregation fields
@@ -96,7 +98,7 @@ class Task:
     @property
     def is_finished(self) -> bool:
         """Check if task is in a terminal state."""
-        return self.status in ("done", "failed", "canceled")
+        return self.status in ("done", "failed", "canceled", "skipped")
 
     def __str__(self) -> str:
         return (

@@ -1,0 +1,8 @@
+build
+html
+compile_commands.json
+CMakeUserPresets.json
+.*.swp
+.cache
+
+include/mscp_version.h

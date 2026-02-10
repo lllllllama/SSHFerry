@@ -1,0 +1,463 @@
+.TH MSCP 1 "@MSCP_BUILD_VERSION@" "mscp" "User Commands"
+
+.SH NAME
+mscp \- copy files over multiple SSH connections
+
+.SH SYNOPSIS
+
+.B mscp
+.RB [ \-46vqDpdNh ]
+[\c
+.BI \-n \ NR_CONNECTIONS\c
+]
+[\c
+.BI \-m \ COREMASK\c
+]
+[\c
+.BI \-u \ MAX_STARTUPS\c
+]
+[\c
+.BI \-I \ INTERVAL\c
+]
+[\c
+.BI \-W \ CHECKPOINT\c
+]
+[\c
+.BI \-R \ CHECKPOINT\c
+]
+[\c
+.BI \-s \ MIN_CHUNK_SIZE\c
+]
+[\c
+.BI \-S \ MAX_CHUNK_SIZE\c
+]
+[\c
+.BI \-a \ NR_AHEAD\c
+]
+[\c
+.BI \-b \ BUF_SIZE\c
+]
+[\c
+.BI \-L \ LIMIT_BITRATE\c
+]
+[\c
+.BI \-l \ LOGIN_NAME\c
+]
+[\c
+.BI \-P \ PORT\c
+]
+[\c
+.BI \-F \ SSH_CONFIG\c
+]
+[\c
+.BI \-o \ SSH_OPTION\c
+]
+[\c
+.BI \-i \ IDENTITY\c
+]
+[\c
+.BI \-J \ DESTINATION\c
+]
+[\c
+.BI \-c \ CIPHER\c
+]
+[\c
+.BI \-M \ HMAC\c
+]
+[\c
+.BI \-C \ COMPRESS\c
+]
+[\c
+.BI \-g \ CONGESTION\c
+]
+.I source ... target
+
+.SH DESCRIPTION
+
+.PP
+.B mscp
+copies files over multiple SSH (SFTP) connections by multiple
+threads. It enables transferring (1) multiple files simultaneously and
+(2) a large file in parallel, reducing the transfer time for a lot
+of/large files over networks.
+
+.PP
+The usage of
+.B mscp
+follows the
+.B scp
+command of
+.I OpenSSH,
+for example:
+
+.nf
+    $ mscp srcfile user@example.com:dstfile
+.fi
+
+Remote hosts only need to run standard
+.B sshd
+supporting the SFTP subsystem, and users need to be able to
+.B ssh
+to the hosts as usual.
+.B mscp
+does not require anything else.
+
+.PP
+.B mscp
+uses
+.UR https://\:www\:.libssh\:.org
+libssh
+.UE
+as its SSH implementation. Thus, supported SSH features, for example,
+authentication, encryption, and various options in ssh_config, follow
+what
+.I libssh
+supports.
+
+.SH OPTIONS
+.TP
+.B \-n \fINR_CONNECTIONS\fR
+Specifies the number of SSH connections. The default value is
+calculated from the number of CPU cores on the host with the following
+formula: floor(log(nr_cores)*2)+1.
+
+.TP
+.B \-m \fICOREMASK\fR
+Configures CPU cores to be used by the hexadecimal bitmask. For
+example, -m 0x25 pins threads onto CPU cores 0, 2, and 5. The default
+value is not specified: all CPU cores are used and no threads are
+pinned to any cores.
+
+.TP
+.B \-u \fIMAX_STARTUPS\fR
+Specifies the number of concurrent unauthenticated SSH connection
+attempts.
+.B sshd
+limits the number of simultaneous SSH connection attempts by
+.I MaxStartups
+in
+.I sshd_config.
+The default
+.I MaxStartups
+is 10; thus, we set the default MAX_STARTUPS 8.
+
+.TP
+.B \-I \fIINTERVAL\fR
+Specifies the interval (in seconds) between SSH connection
+attempts. Some firewall products treat SSH connection attempts from a
+single source IP address for a short period as a brute force attack.
+This option inserts intervals between the attempts to avoid being
+determined as an attack. The default value is 0.
+
+.TP
+.B \-W \fICHECKPOINT\fR
+Specifies a checkpoint file to save the state of a failed
+transfer. When transferring fails due to, for example, connection
+disruption or user interrupt,
+.B mscp
+writes the information about the remaining files and chunks to the
+specified checkpoint file.
+.B \-W
+option with
+.B \-D
+(dry-run mode) only writes a checkpoint file and exits.
+
+
+.TP
+.B \-R \fICHECKPOINT\fR
+Specifies a checkpoint file to resume a transfer. When a checkpoint
+file is passed,
+.B mscp
+reads the checkpoint to load a remote host, copy direction, and files
+and their chunks to be transferred. Namely,
+.B mscp
+can resume a past failed transfer from the checkpoint. Resuming with a
+checkpoint does not require
+.I source ... target
+arguments. Other SSH connection options, such as port number and
+config file, should be specified as with the failed run. In addition,
+checkpoint files have file paths as relative paths. Thus, you must run
+.B mscp
+in the same working directory as the failed run. You can see the
+contents of a checkpoint file with the
+.B mscp \-vv \-D \-R CHECKPOINT
+command (Dry-run mode).  Note that the checkpoint file is not
+automatically removed after the resumed transfer ends
+successfully. Users should check the return value of
+.B mscp
+and remove the checkpoint if it returns 0.
+
+
+.TP
+.B \-s \fIMIN_CHUNK_SIZE\fR
+Specifies the minimum chunk size.
+.B mscp
+divides a single file into chunks and copies the chunks in
+parallel. The default value is 16M bytes.
+
+.TP
+.B \-S \fIMAX_CHUNK_SIZE\fR
+Specifies the maximum chunk size. The default is file size divided by
+the number of connections and devided by 4. If the calculated value
+is smarller than the
+.B MIN_CHUNK_SIZE
+value,
+MIN_CHUNK_SIZE is used.
+
+.TP
+.B \-a \fINR_AHEAD\fR
+Specifies the number of inflight SFTP commands. The default value is
+32.
+
+.TP
+.B \-b \fIBUF_SIZE\fR
+Specifies the buffer size for I/O and transfer over SFTP. The default
+value is 16384. Note that the SSH specification restricts buffer size
+delivered over SSH. Changing this value is not recommended at present.
+
+.TP
+.B \-L \fILIMIT_BITRATE\fR
+Limits the bitrate, specified with k (K), m (M), and g (G), e.g., 100m
+indicates 100 Mbps.
+
+.TP
+.B \-4
+Uses IPv4 addresses only.
+
+.TP
+.B \-6
+Uses IPv6 addresses only.
+
+.TP
+.B \-v
+Increments the verbose output level.
+
+.TP
+.B \-q
+Quiet mode: turns off all outputs.
+
+.TP
+.B \-D
+Dry-run mode: it scans source files to be copied, calculates chunks,
+resolves destination file paths, and exits. Dry-run mode with
+.B -vv
+option can confirm files to be copied and their destination paths.
+
+.TP
+.B \-r
+No effect.
+.B mscp
+copies recursively if a source path is a directory. This option exists
+for just compatibility.
+
+.TP
+.B \-l \fILOGIN_NAME\fR
+Specifies the username to log in on the remote machine as with
+.I ssh(1).
+
+.TP
+.B \-P \fIPORT\fR
+Specifies the port number to connect to on the remote machine as with
+.I scp(1).
+
+.TP
+.B \-F \fISSH_CONFIG\fR
+Specifies an alternative per-user ssh configuration file. Note that
+acceptable options in the configuration file are what
+.I libssh
+supports.
+
+.TP
+.B \-o \fISSH_OPTION\fR
+Specifies ssh options in the format used in ssh_config. Note that
+acceptable options are what
+.I libssh
+supports.
+
+.TP
+.B \-i \fIIDENTITY\fR
+Specifies the identity file for public key authentication.
+
+.TP
+.B \-J \fIDESTINATION\fR
+A shortcut to define a
+.B ProxyJump
+configuration directive. Each SFTP session of
+.B mscp
+connects to the target host by first making an
+.B ssh
+connection to the jump host described by
+.I destination.
+
+
+
+.TP
+.B \-c \fICIPHER\fR
+Selects the cipher to use for encrypting the data transfer. See
+.B mscp -h
+or
+.B Ciphers
+in
+.UR https://\:www\:.libssh\:.org/\:features/
+libssh features
+.UE .
+
+.TP
+.B \-M \fIHMAC\fR
+Specifies MAC hash algorithms. See
+.B mscp -h
+or
+.B MAC hashes
+in
+.UR https://\:www\:.libssh\:.org/\:features/
+libssh features
+.UE .
+
+.TP
+.B \-C \fICOMPRESS\fR
+Enables compression: yes, no, zlib, zlib@openssh.com. The default is
+none. See
+.UR https://\:www\:.libssh\:.org/\:features/
+libssh features
+.UE .
+
+.TP
+.B \-g \fICONGESTION\fR
+Specifies the TCP congestion control algorithm to use (Linux only).
+See
+.B sysctl net.ipv4.tcp_allowed_congestion_control
+for available values.
+
+.TP
+.B \-p
+Preserves modification times and access times (file mode bits are
+preserved by default).
+
+.TP
+.B \-d
+Increments the ssh debug output level.
+
+.TP
+.B \-N
+Enables Nagle's algorithm. It is disabled by default.
+
+.TP
+.B \-h
+Prints help.
+
+.SH EXIT STATUS
+Exit status is 0 on success,  and >0 if an error occurs.
+
+.SH ENVIRONMENT
+
+.PP
+.B mscp
+recognizes the following environment variables.
+
+.TP
+.B MSCP_SSH_AUTH_PASSWORD
+This environment variable passes a password for password
+authentication to establish SSH connections.
+
+.TP
+.B MSCP_SSH_AUTH_PASSPHRASE
+This environment variable passes a passphrase for public-key
+authentication for establishing SSH connections.
+
+
+
+.SH NOTES
+
+.PP
+.B mscp
+uses glob(3) for globbing pathnames, including matching patterns for
+local and remote paths. However, globbing on the
+.I remote
+side does not work with musl libc (used in Alpine Linux and the
+single-binary version of mscp) because musl libc does not support
+GLOB_ALTDIRFUNC.
+
+.PP
+.B mscp
+does not support remote-to-remote copy, which
+.B scp
+supports.
+
+.SH EXAMPLES
+
+.PP
+Copy a local file to a remote host with different name:
+
+.nf
+    $ mscp ~/src-file 10.0.0.1:copied-file
+.fi
+
+.PP
+Copy a local file and a directory to /tmp at a remote host:
+
+.nf
+    $ mscp ~/src-file dir1 10.0.0.1:/tmp
+.fi
+
+.PP
+Save a checkpoint if transfer fails:
+
+.nf
+    $ mscp -W mscp.checkpoint many-large-files 10.0.0.1:dst/
+.fi
+
+.PP
+Check the remaining files and chunks, and resume the failed transfer:
+
+.nf
+    # Dump the content of a checkpoint and exit (dry-run mode)
+    $ mscp -vv -D -R mscp.checkpoint
+
+    # resume transferring from the checkpoint
+    $ mscp -R mscp.checkpoint
+.fi
+
+.PP
+In a long fat network, following options might improve performance:
+
+.nf
+    $ mscp -n 64 -m 0xffff -a 64 -c aes128-gcm@openssh.com src 10.0.0.1:
+.fi
+
+.B -n
+increases the number of SSH connections than default,
+.B -m
+pins threads to specific CPU cores,
+.B -a
+increases asynchronous inflight SFTP WRITE/READ commands, and
+.B -c aes128-gcm@openssh.com
+will be faster than the default chacha20-poly1305 cipher, particularly
+on hosts that support AES-NI.
+
+
+.SH "SEE ALSO"
+.BR scp (1),
+.BR ssh (1),
+.BR sshd (8).
+
+.SH "PAPER REFERENCE"
+
+
+Ryo Nakamura and Yohei Kuga. 2023. Multi-threaded scp: Easy and Fast
+File Transfer over SSH. In Practice and Experience in Advanced
+Research Computing (PEARC '23). Association for Computing Machinery,
+New York, NY, USA, 320–323.
+.UR https://\:doi\:.org/\:10.1145/\:3569951.3597582
+DOI
+.UE .
+
+
+.SH CONTACT INFORMATION
+.PP
+For patches, bug reports, or feature requests, please open an issue on
+.UR https://\:github\:.com/\:upa/\:mscp
+GitHub
+.UE .
+
+.SH AUTHORS
+Ryo Nakamura <upa@haeena.net>

@@ -258,6 +258,26 @@ class MainWindow(QMainWindow):
                 border: 1px solid #e0e0e0;
                 border-radius: 4px;
             }
+            QMenu {
+                background-color: #ffffff;
+                border: 1px solid #d0d0d0;
+                border-radius: 4px;
+                padding: 4px 0px;
+            }
+            QMenu::item {
+                padding: 6px 24px 6px 12px;
+                background-color: transparent;
+                color: #333333;
+            }
+            QMenu::item:selected {
+                background-color: #e5f1fb;
+                color: #0078d4;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #e0e0e0;
+                margin: 4px 0px;
+            }
         """)
 
         self._init_ui()
@@ -331,6 +351,11 @@ class MainWindow(QMainWindow):
         # --- Bottom: task center + log ---
         bottom_splitter = QSplitter(Qt.Horizontal)
         self.task_center = TaskCenterPanel()
+        self.task_center.request_pause.connect(self.pause_task)
+        self.task_center.request_resume.connect(self.resume_task)
+        self.task_center.request_cancel.connect(self.cancel_task)
+        self.task_center.request_restart.connect(self.restart_task)
+        self.task_center.request_clear_finished.connect(self.clear_finished_tasks)
         bottom_splitter.addWidget(self.task_center)
 
         self.log_text = QTextEdit()
@@ -614,9 +639,28 @@ class MainWindow(QMainWindow):
     def _remote_delete(self, entry: RemoteEntry):
         if not self._ensure_site():
             return
-        self._log(f"delete {entry.path}")
-        func_name = "remove_dir" if entry.is_dir else "remove_file"
-        t = RemoteOpThread(self.current_site, func_name, entry.path)
+            
+        is_dir = entry.is_dir
+        msg = f"Delete '{entry.name}'"
+        if is_dir:
+            msg += " and all its contents?\n\nThis cannot be undone."
+        else:
+            msg += "?"
+            
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete",
+            msg,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        cmd = "remove_dir_recursive" if is_dir else "remove_file"
+            
+        self._log(f"Deleting {entry.path}")
+        t = RemoteOpThread(self.current_site, cmd, entry.path)
         t.op_done.connect(self._remote_refresh)
         t.op_failed.connect(lambda m: self._op_error("delete", m))
         self._start_thread(t)
@@ -864,7 +908,19 @@ class MainWindow(QMainWindow):
 
     def cancel_task(self, task_id: str):
         if self.scheduler and self.scheduler.cancel_task(task_id):
-            self._log(f"Canceled {task_id[:8]}")
+            self._log(f"Canceled task {task_id[:8]}")
+
+    def pause_task(self, task_id: str):
+        if self.scheduler and self.scheduler.pause_task(task_id):
+            self._log(f"Paused task {task_id[:8]}")
+
+    def resume_task(self, task_id: str):
+        if self.scheduler and self.scheduler.resume_task(task_id):
+            self._log(f"Resumed task {task_id[:8]}")
+
+    def restart_task(self, task_id: str):
+        if self.scheduler and self.scheduler.restart_task(task_id):
+            self._log(f"Restarted task {task_id[:8]}")
 
     def clear_finished_tasks(self):
         if not self.scheduler:
