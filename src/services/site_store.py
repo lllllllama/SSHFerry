@@ -46,7 +46,7 @@ class SiteStore:
                     port=item.get("port", 22),
                     username=item["username"],
                     auth_method=item.get("auth_method", "password"),
-                    remote_root=item.get("remote_root", "/root"),
+                    remote_root=item.get("remote_root", "/") or "/",
                     key_path=item.get("key_path"),
                     mscp_path=item.get("mscp_path"),
                     proxy_jump=item.get("proxy_jump"),

@@ -81,6 +81,12 @@ class TestEnsureInSandbox:
         ensure_in_sandbox("/root/autodl-tmp/test", "/root/autodl-tmp/")  # Should not raise
         ensure_in_sandbox("/root/autodl-tmp/test/", "/root/autodl-tmp")  # Should not raise
 
+    def test_root_sandbox_allows_any_absolute_path(self):
+        """Test that sandbox root '/' allows all absolute paths."""
+        ensure_in_sandbox("/", "/")
+        ensure_in_sandbox("/mnt", "/")
+        ensure_in_sandbox("/tmp/a/b", "/")
+
 
 class TestJoinRemotePath:
     """Tests for join_remote_path function."""

@@ -85,7 +85,7 @@ class SiteEditorDialog(QDialog):
         basic_layout.addRow("Username:", self.username_edit)
 
         self.remote_root_edit = QLineEdit()
-        self.remote_root_edit.setPlaceholderText("/root/autodl-tmp")
+        self.remote_root_edit.setPlaceholderText("/")
         basic_layout.addRow("Remote Root (Sandbox):", self.remote_root_edit)
 
         basic_group.setLayout(basic_layout)
@@ -205,8 +205,6 @@ class SiteEditorDialog(QDialog):
             missing.append("Host")
         if not self.username_edit.text().strip():
             missing.append("Username")
-        if not self.remote_root_edit.text().strip():
-            missing.append("Remote Root (Sandbox)")
 
         if missing:
             QMessageBox.warning(
@@ -217,6 +215,7 @@ class SiteEditorDialog(QDialog):
             return
 
         auth_method = self.auth_method_combo.currentText()
+        remote_root = self.remote_root_edit.text().strip() or "/"
 
         # Create configuration
         config = SiteConfig(
@@ -225,7 +224,7 @@ class SiteEditorDialog(QDialog):
             port=self.port_spin.value(),
             username=self.username_edit.text(),
             auth_method=auth_method,
-            remote_root=self.remote_root_edit.text(),
+            remote_root=remote_root,
         )
 
         # Add credentials (runtime only)

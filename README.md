@@ -28,7 +28,7 @@ It focuses on three goals: **safe remote operations**, **practical transfer beha
 ## 🧭 Quick Start
 
 1. Add a site (manual form or paste SSH command).
-2. Set `remote_root` (required sandbox root).
+2. `remote_root` can be left empty; it will default to `/` (full filesystem scope). You can narrow it to a subdirectory if needed.
 3. Run connection check.
 4. Connect and browse remote tree.
 5. Upload/download files or folders.

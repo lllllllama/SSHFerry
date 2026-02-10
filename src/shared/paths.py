@@ -51,6 +51,10 @@ def ensure_in_sandbox(path: str, remote_root: str) -> None:
     normalized_path = normalize_remote_path(path)
     normalized_root = normalize_remote_path(remote_root)
 
+    # Root sandbox means full filesystem scope.
+    if normalized_root == '/':
+        return
+
     # Check if path is exactly root or starts with root/
     if normalized_path == normalized_root:
         return

@@ -427,7 +427,7 @@ class MainWindow(QMainWindow):
             username="root",
             auth_method="password",
             password=password,
-            remote_root="/root/autodl-tmp",
+            remote_root="/",
         )
         self.sites.append(site)
         self.site_list.addItem(site.name)
@@ -519,14 +519,9 @@ class MainWindow(QMainWindow):
                 return
             self.current_site.password = pwd
 
-        # Validate remote_root is set
+        # Default empty remote_root to root
         if not self.current_site.remote_root or not self.current_site.remote_root.strip():
-            QMessageBox.warning(
-                self,
-                "Invalid Configuration",
-                "Remote Root (Sandbox) is not set.\nPlease edit the site and set a valid remote_root path."
-            )
-            return
+            self.current_site.remote_root = "/"
 
         self._log(f"Connecting to {self.current_site.name}...")
         self.conn_label.setText("Connecting...")
