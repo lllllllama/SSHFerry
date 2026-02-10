@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # Fields that are safe to persist (no secrets)
 _PERSIST_FIELDS = [
     "name", "host", "port", "username", "auth_method", "remote_root",
-    "key_path", "mscp_path", "proxy_jump", "ssh_config_path", "ssh_options",
+    "key_path", "proxy_jump", "ssh_config_path", "ssh_options",
 ]
 
 
@@ -48,7 +48,6 @@ class SiteStore:
                     auth_method=item.get("auth_method", "password"),
                     remote_root=item.get("remote_root", "/") or "/",
                     key_path=item.get("key_path"),
-                    mscp_path=item.get("mscp_path"),
                     proxy_jump=item.get("proxy_jump"),
                     ssh_config_path=item.get("ssh_config_path"),
                     ssh_options=item.get("ssh_options", []),

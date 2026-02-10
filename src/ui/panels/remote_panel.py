@@ -1,7 +1,8 @@
 """Remote file panel for displaying remote directory contents."""
+import os
 
 from PySide6.QtCore import QByteArray, QMimeData, QTimer, Qt, Signal
-from PySide6.QtGui import QDrag
+from PySide6.QtGui import QColor, QDrag, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -51,7 +52,26 @@ class DraggableTreeWidget(QTreeWidget):
         # Start drag
         drag = QDrag(self)
         drag.setMimeData(mime_data)
+        label = os.path.basename(paths[0]) if len(paths) == 1 else f"{len(paths)} items"
+        drag.setPixmap(self._build_drag_pixmap(label))
         drag.exec(Qt.CopyAction)
+
+    @staticmethod
+    def _build_drag_pixmap(label: str) -> QPixmap:
+        """Create non-null drag pixmap to avoid Qt null-pixmap scaling warnings."""
+        width = min(360, max(140, 24 + len(label) * 7))
+        height = 28
+        pixmap = QPixmap(width, height)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setBrush(QColor(0, 120, 212, 220))
+        painter.setPen(QColor(0, 120, 212, 240))
+        painter.drawRoundedRect(0, 0, width - 1, height - 1, 6, 6)
+        painter.setPen(QColor("white"))
+        painter.drawText(10, 19, label)
+        painter.end()
+        return pixmap
 
 
 class RemotePanel(QWidget):

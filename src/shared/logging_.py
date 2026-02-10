@@ -107,7 +107,7 @@ def log_task_event(
     Args:
         logger: Logger instance
         task_id: Task ID
-        engine: Engine name (sftp/mscp)
+        engine: Engine name (sftp/parallel)
         kind: Task kind (upload/download/etc)
         status: Task status
         host: Remote host (optional)

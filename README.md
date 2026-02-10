@@ -1,4 +1,4 @@
-# SSHFerry ✨
+﻿# SSHFerry ✨
 
 [中文](README_zh.md) | English
 
@@ -12,7 +12,7 @@ It focuses on three goals: **safe remote operations**, **practical transfer beha
 - ⏯️ Resume/skip-aware transfer behavior
 - 🧪 Built-in connection checker (TCP/SSH/SFTP/read/write)
 - 📊 Task center with pause/resume/cancel/restart
-- ⚡ Optional `mscp` acceleration with fallback to parallel SFTP
+- ⚡ High-throughput parallel chunk transfer for large files
 
 ## 📌 Current Scope
 
@@ -21,7 +21,7 @@ It focuses on three goals: **safe remote operations**, **practical transfer beha
 - Protocol: `Paramiko` (SSH/SFTP)
 - Engines:
   - `sftp` (default)
-  - `mscp` (optional external binary)
+  - `parallel` (native chunked transfer for large files)
 - Task states:
   - `pending`, `running`, `paused`, `done`, `failed`, `canceled`, `skipped`
 
@@ -79,13 +79,35 @@ python -c "from src.shared.errors import ErrorCode; from src.shared.models impor
 4. Drag remote files into local panel; verify download tasks are created.
 5. Attempt an operation outside sandbox; verify it is blocked.
 
+## ⚡ Large File Performance
+
+### Current strategy
+
+- For large files, SSHFerry prefers accelerated transfer path selection.
+- Large files are automatically switched to optimized parallel SFTP chunk transfer.
+- Parallel transfer uses throughput presets (`low` / `medium` / `high`) and defaults to `high` for max speed.
+
+### Why fallback is faster now
+
+- Reuses per-worker local/remote file handles instead of opening per chunk.
+- Uses multi-connection concurrent chunk transfer.
+- Keeps progress updates batched to reduce callback overhead.
+
+### Optimization tips for best speed
+
+1. Keep current default preset (`high`) for best throughput.
+2. Use stable wired network when possible.
+3. Prefer key auth and reduce proxy-hop count.
+4. Resume interrupted transfers instead of restarting.
+5. Keep enough disk I/O headroom on both ends; chunked parallel transfer is sensitive to storage bottlenecks.
+
 ## 🗂️ Project Layout
 
 ```text
 src/
   app/        # Entry point
   core/       # Scheduler and task logic
-  engines/    # SFTP / parallel SFTP / MSCP
+  engines/    # SFTP / parallel SFTP
   services/   # Site storage, connection checks, metrics
   shared/     # Models, errors, path sandboxing, logging
   ui/         # Main window and panels
@@ -95,6 +117,5 @@ tests/        # Pytest test suite
 
 ## 📝 Notes
 
-- `mscp` acceleration requires an external binary.
 - Passwords are runtime-only and not persisted by `SiteStore`.
 - Current positioning: personal and educational use.

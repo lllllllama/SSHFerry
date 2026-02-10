@@ -22,9 +22,6 @@ class SiteConfig:
     key_path: Optional[str] = None
     key_passphrase: Optional[str] = None
 
-    # MSCP configuration
-    mscp_path: Optional[str] = None
-
     # Advanced SSH options
     proxy_jump: Optional[str] = None
     ssh_config_path: Optional[str] = None
@@ -65,7 +62,7 @@ class Task:
 
     task_id: str
     kind: str  # "upload", "download", "delete", "mkdir", "rename"
-    engine: str  # "sftp" or "mscp"
+    engine: str  # "sftp" or "parallel"
     src: str
     dst: str
     bytes_total: int
@@ -75,7 +72,7 @@ class Task:
     retries: int = 0
     error_code: Optional[ErrorCode] = None
     error_message: Optional[str] = None
-    checkpoint_path: Optional[str] = None  # For mscp resume
+    checkpoint_path: Optional[str] = None
     start_time: Optional[float] = None  # Unix timestamp when task started
     end_time: Optional[float] = None    # Unix timestamp when task finished
     speed: float = 0.0  # Current transfer speed in bytes/sec

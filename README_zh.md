@@ -12,7 +12,7 @@ SSHFerry 是一个基于 Python + PySide6 的 SSH/SFTP 桌面图形工具。
 - ⏯️ 续传与跳过策略（断点续传、同尺寸跳过）
 - 🧪 内置连接检查（TCP/SSH/SFTP/读写）
 - 📊 任务中心支持暂停/恢复/取消/重试
-- ⚡ 可选 `mscp` 加速（不可用时回退并行 SFTP）
+- ⚡ 针对大文件的高吞吐并行分块传输
 
 ## 📌 当前范围
 
@@ -21,7 +21,7 @@ SSHFerry 是一个基于 Python + PySide6 的 SSH/SFTP 桌面图形工具。
 - 协议：`Paramiko`（SSH/SFTP）
 - 引擎：
   - `sftp`（默认）
-  - `mscp`（可选外部二进制）
+  - `parallel`（大文件原生并行分块传输）
 - 任务状态：
   - `pending`、`running`、`paused`、`done`、`failed`、`canceled`、`skipped`
 
@@ -79,13 +79,35 @@ python -c "from src.shared.errors import ErrorCode; from src.shared.models impor
 4. 将远程文件拖拽到本地面板，确认创建下载任务。
 5. 尝试对沙箱外路径操作，确认被拦截。
 
+## ⚡ 大文件传输性能
+
+### 当前策略
+
+- 对大文件，SSHFerry 会优先走加速传输路径。
+- 大文件会自动切换到优化后的并行 SFTP 分块传输。
+- 并行传输支持吞吐预设（`low` / `medium` / `high`），默认使用 `high` 追求更高速度。
+
+### 为什么现在回退更快
+
+- 每个 worker 复用本地/远端文件句柄，减少按分片反复打开关闭的开销。
+- 多连接并发分片传输。
+- 进度回调做了批量上报，降低回调锁竞争开销。
+
+### 最快传输优化建议
+
+1. 保持默认 `high` 预设以获得更高吞吐。
+2. 尽量使用稳定有线网络。
+3. 优先密钥认证，并减少代理跳转层数。
+4. 传输中断后优先续传，不要从零重传。
+5. 保证两端磁盘 I/O 有余量，并行分块传输对存储瓶颈更敏感。
+
 ## 🗂️ 项目结构
 
 ```text
 src/
   app/        # 入口
   core/       # 调度器与任务逻辑
-  engines/    # SFTP / 并行 SFTP / MSCP
+  engines/    # SFTP / 并行 SFTP
   services/   # 站点存储、连接检查、指标统计
   shared/     # 模型、错误、路径沙箱、日志
   ui/         # 主窗口与各面板
@@ -95,6 +117,5 @@ tests/        # Pytest 测试集
 
 ## 📝 说明
 
-- `mscp` 加速依赖外部可执行文件。
 - 密码为运行时信息，不会通过 `SiteStore` 持久化。
 - 当前项目定位为个人与学习用途。

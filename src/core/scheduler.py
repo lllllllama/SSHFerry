@@ -8,8 +8,10 @@ from queue import Queue
 from threading import Lock, Thread
 from typing import Dict, List, Optional
 
-from src.engines.mscp_engine import DEFAULT_THRESHOLD_BYTES, MscpEngine
-from src.engines.parallel_sftp_engine import ParallelSftpEngine
+from src.engines.parallel_sftp_engine import (
+    DEFAULT_PARALLEL_THRESHOLD_BYTES,
+    ParallelSftpEngine,
+)
 from src.engines.sftp_engine import SftpEngine
 from src.services.metrics import MetricsCollector, TransferRecord
 from src.shared.errors import ErrorCode, SSHFerryError
@@ -32,8 +34,8 @@ class TaskScheduler:
         self,
         site_config: SiteConfig,
         max_workers: int = 3,
-        mscp_preset: str = "low",
-        mscp_threshold: int = DEFAULT_THRESHOLD_BYTES,
+        parallel_preset: str = "high",
+        parallel_threshold: int = DEFAULT_PARALLEL_THRESHOLD_BYTES,
         logger: Optional[logging.Logger] = None
     ):
         """
@@ -42,14 +44,14 @@ class TaskScheduler:
         Args:
             site_config: Site configuration for SFTP connection
             max_workers: Maximum number of concurrent tasks
-            mscp_preset: MSCP acceleration preset (low/medium/high)
-            mscp_threshold: File size threshold for auto MSCP (bytes)
+            parallel_preset: Parallel transfer preset (low/medium/high)
+            parallel_threshold: File size threshold for auto parallel mode (bytes)
             logger: Optional logger instance
         """
         self.site_config = site_config
         self.max_workers = max_workers
-        self.mscp_preset = mscp_preset
-        self.mscp_threshold = mscp_threshold
+        self.parallel_preset = parallel_preset
+        self.parallel_threshold = parallel_threshold
         self.logger = logger or logging.getLogger(__name__)
 
         # Task storage
@@ -283,13 +285,13 @@ class TaskScheduler:
         try:
             # Execute based on task kind and engine
             if task.kind == "upload":
-                if task.engine == "mscp":
-                    self._execute_mscp_upload(task)
+                if task.engine == "parallel":
+                    self._execute_parallel_upload(task)
                 else:
                     self._execute_upload(task)
             elif task.kind == "download":
-                if task.engine == "mscp":
-                    self._execute_mscp_download(task)
+                if task.engine == "parallel":
+                    self._execute_parallel_download(task)
                 else:
                     self._execute_download(task)
             elif task.kind == "folder_upload":
@@ -316,7 +318,7 @@ class TaskScheduler:
             if task.kind in ("upload", "download", "folder_upload", "folder_download") and task.status == "done":
                 duration = time.time() - (task.start_time or time.time())
                 self.metrics.record(TransferRecord(
-                    preset=self.mscp_preset,
+                    preset=self.parallel_preset,
                     bytes_transferred=task.bytes_done,
                     duration_seconds=max(0.1, duration),
                     success=True,
@@ -344,7 +346,7 @@ class TaskScheduler:
             if task.kind in ("upload", "download", "folder_upload", "folder_download"):
                 duration = time.time() - (task.start_time or time.time())
                 self.metrics.record(TransferRecord(
-                    preset=self.mscp_preset,
+                    preset=self.parallel_preset,
                     bytes_transferred=task.bytes_done,
                     duration_seconds=max(0.1, duration),
                     success=False,
@@ -371,7 +373,7 @@ class TaskScheduler:
             if task.kind in ("upload", "download", "folder_upload", "folder_download"):
                 duration = time.time() - (task.start_time or time.time())
                 self.metrics.record(TransferRecord(
-                    preset=self.mscp_preset,
+                    preset=self.parallel_preset,
                     bytes_transferred=task.bytes_done,
                     duration_seconds=max(0.1, duration),
                     success=False,
@@ -536,80 +538,65 @@ class TaskScheduler:
         
         return new_path
 
-    def _execute_mscp_upload(self, task: Task):
-        """Execute upload task using MSCP engine (or fallback to Parallel SFTP)."""
-        checkpoint_dir = os.path.join(
-            os.path.expanduser("~"), ".sshferry", "checkpoints"
-        )
-        engine = MscpEngine(self.site_config, preset_name=self.mscp_preset, logger=self.logger)
-        
-        if not engine.is_available():
-            self.logger.warning("MSCP not available, falling back to Native Parallel SFTP")
-            
-            # Defines for callback
-            def progress_callback(bytes_transferred, bytes_total):
+    def _execute_parallel_upload(self, task: Task):
+        """Execute upload task using native parallel SFTP engine."""
+        def progress_callback(bytes_transferred, bytes_total):
+            with self.task_lock:
+                task.bytes_done = bytes_transferred
+                task.bytes_total = bytes_total
+                if task.start_time:
+                    elapsed = time.time() - task.start_time
+                    if elapsed > 0:
+                        task.speed = bytes_transferred / elapsed
+
+        def check_interrupt():
+            if task.paused:
                 with self.task_lock:
-                    task.bytes_done = bytes_transferred
-                    task.bytes_total = bytes_total
-                    if task.start_time:
-                        elapsed = time.time() - task.start_time
-                        if elapsed > 0:
-                            task.speed = bytes_transferred / elapsed
+                    task.status = "paused"
+                raise InterruptedError("Task paused")
+            return task.interrupted
 
-            def check_interrupt():
-                if task.paused:
-                    with self.task_lock:
-                        task.status = "paused"
-                    raise InterruptedError("Task paused")
-                return task.interrupted
-
-            p_engine = ParallelSftpEngine(self.site_config, self.logger)
-            p_engine.upload_file(task.src, task.dst, callback=progress_callback, check_interrupt=check_interrupt)
-            return
-        
-        exit_code = engine.upload(task.src, task.dst, checkpoint_dir=checkpoint_dir)
-        if exit_code != 0:
-            raise SSHFerryError(
-                ErrorCode.MSCP_EXIT_NONZERO,
-                f"mscp exited with code {exit_code}"
-            )
-
-    def _execute_mscp_download(self, task: Task):
-        """Execute download task using MSCP engine (or fallback to Parallel SFTP)."""
-        checkpoint_dir = os.path.join(
-            os.path.expanduser("~"), ".sshferry", "checkpoints"
+        p_engine = ParallelSftpEngine(
+            self.site_config,
+            self.logger,
+            preset_name=self.parallel_preset,
         )
-        engine = MscpEngine(self.site_config, preset_name=self.mscp_preset, logger=self.logger)
-        
-        if not engine.is_available():
-            self.logger.warning("MSCP not available, falling back to Native Parallel SFTP")
+        p_engine.upload_file(
+            task.src,
+            task.dst,
+            callback=progress_callback,
+            check_interrupt=check_interrupt,
+        )
 
-            def progress_callback(bytes_transferred, bytes_total):
+    def _execute_parallel_download(self, task: Task):
+        """Execute download task using native parallel SFTP engine."""
+        def progress_callback(bytes_transferred, bytes_total):
+            with self.task_lock:
+                task.bytes_done = bytes_transferred
+                task.bytes_total = bytes_total
+                if task.start_time:
+                    elapsed = time.time() - task.start_time
+                    if elapsed > 0:
+                        task.speed = bytes_transferred / elapsed
+
+        def check_interrupt():
+            if task.paused:
                 with self.task_lock:
-                    task.bytes_done = bytes_transferred
-                    task.bytes_total = bytes_total
-                    if task.start_time:
-                        elapsed = time.time() - task.start_time
-                        if elapsed > 0:
-                            task.speed = bytes_transferred / elapsed
+                    task.status = "paused"
+                raise InterruptedError("Task paused")
+            return task.interrupted
 
-            def check_interrupt():
-                if task.paused:
-                    with self.task_lock:
-                        task.status = "paused"
-                    raise InterruptedError("Task paused")
-                return task.interrupted
-
-            p_engine = ParallelSftpEngine(self.site_config, self.logger)
-            p_engine.download_file(task.src, task.dst, callback=progress_callback, check_interrupt=check_interrupt)
-            return
-        
-        exit_code = engine.download(task.src, task.dst, checkpoint_dir=checkpoint_dir)
-        if exit_code != 0:
-            raise SSHFerryError(
-                ErrorCode.MSCP_EXIT_NONZERO,
-                f"mscp exited with code {exit_code}"
-            )
+        p_engine = ParallelSftpEngine(
+            self.site_config,
+            self.logger,
+            preset_name=self.parallel_preset,
+        )
+        p_engine.download_file(
+            task.src,
+            task.dst,
+            callback=progress_callback,
+            check_interrupt=check_interrupt,
+        )
 
     def _execute_delete(self, task: Task):
         """Execute delete task."""
@@ -823,7 +810,7 @@ class TaskScheduler:
         file_size: int,
         engine: str = "sftp",
         auto_engine: bool = True,
-        threshold: int = DEFAULT_THRESHOLD_BYTES
+        threshold: int = DEFAULT_PARALLEL_THRESHOLD_BYTES
     ) -> Task:
         """
         Create an upload task.
@@ -832,15 +819,15 @@ class TaskScheduler:
             local_path: Local file path
             remote_path: Remote destination path
             file_size: File size in bytes
-            engine: Engine to use (sftp or mscp), ignored if auto_engine=True
+            engine: Engine to use (sftp or parallel), ignored if auto_engine=True
             auto_engine: If True, auto-select engine based on file size
-            threshold: Size threshold for auto MSCP selection
+            threshold: Size threshold for auto parallel selection
             
         Returns:
             Task object
         """
         if auto_engine and file_size >= threshold:
-            engine = "mscp"
+            engine = "parallel"
         return Task(
             task_id=str(uuid.uuid4()),
             kind="upload",
@@ -858,7 +845,7 @@ class TaskScheduler:
         file_size: int,
         engine: str = "sftp",
         auto_engine: bool = True,
-        threshold: int = DEFAULT_THRESHOLD_BYTES
+        threshold: int = DEFAULT_PARALLEL_THRESHOLD_BYTES
     ) -> Task:
         """
         Create a download task.
@@ -867,15 +854,15 @@ class TaskScheduler:
             remote_path: Remote file path
             local_path: Local destination path
             file_size: File size in bytes
-            engine: Engine to use (sftp or mscp), ignored if auto_engine=True
+            engine: Engine to use (sftp or parallel), ignored if auto_engine=True
             auto_engine: If True, auto-select engine based on file size
-            threshold: Size threshold for auto MSCP selection
+            threshold: Size threshold for auto parallel selection
             
         Returns:
             Task object
         """
         if auto_engine and file_size >= threshold:
-            engine = "mscp"
+            engine = "parallel"
         return Task(
             task_id=str(uuid.uuid4()),
             kind="download",
