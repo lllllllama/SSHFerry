@@ -801,53 +801,7 @@ class MainWindow(QMainWindow):
         local_dir = self.local_panel.get_current_dir()
 
         for remote_path in remote_paths:
-            # We don't have easy access to the RemoteEntry object here since we just get paths from MIME text.
-            # But the tree logic sent paths. We can assume files if not known, or we'd need to stat them.
-            # However, `remote_panel.startDrag` sends paths.
-            
-            # Improvement: We can just schedule a download.
-            # If we really need entry info (size, is_dir), we might need to stat it or look it up in tree.
-            # LOOKING UP IN TREE is hard because we don't have item references.
-            
-            # Simple approach: Create task, let scheduler handle it? 
-            # Scheduler `create_download_task` uses `engine.stat` if we don't provide size? 
-            # Let's check `_execute_download`. Yes, it does `engine.stat`.
-            # For folders... `create_download_task` assumes file.
-            
-            # Hack: We can assume it's a file unless it ends with /. 
-            # Or better: We rely on the user.
-            
-            # Re-implementing lookup from tree text? No.
-            # Let's just create a generic task.
-            name = os.path.basename(remote_path)
-            local_path = os.path.join(local_dir, name)
-            
-            # Note: If it's a directory, `download_file` might fail or we need `folder_download`.
-            # Ideally we check type.
-            
-            # Quick stat to check type?
-            # Or just assume file for now?
-            
-            task = TaskScheduler.create_download_task(remote_path, local_path, 0)
-            self.scheduler.add_task(task)
-            self._log(f"Queued download (drag): {name} -> {local_path}")
-        """Handle drag-drop download from remote panel."""
-        if not self._ensure_site() or not self.scheduler:
-            return
-        if not remote_paths:
-            return
-
-        local_dir = self.local_panel.get_current_dir()
-
-        # Find entries for the remote paths
-        for remote_path in remote_paths:
-            # Look up entry in remote panel's cached entries
-            entry = None
-            for e in self.remote_panel.entries:
-                if e.path == remote_path:
-                    entry = e
-                    break
-
+            entry = self._find_remote_entry_by_path(remote_path)
             if entry:
                 if entry.is_dir:
                     self._log(f"Queued download folder (drag): {entry.path}")
@@ -870,7 +824,7 @@ class MainWindow(QMainWindow):
         # We need to scan the remote dir first (in a thread) to count files
         t = ListDirThread(self.current_site, remote_dir)
 
-        def on_listed(path, entries):
+        def on_listed(path, entries, _parent_item):
             dir_name = os.path.basename(remote_dir)
             local_dir = os.path.join(local_parent, dir_name)
             
@@ -941,6 +895,27 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No Site", "Select a site first.")
             return False
         return True
+
+    def _find_remote_entry_by_path(self, remote_path: str) -> Optional[RemoteEntry]:
+        """Find a RemoteEntry in the remote tree by full path."""
+        tree = self.remote_panel.tree
+
+        def walk(item: QTreeWidgetItem) -> Optional[RemoteEntry]:
+            entry = item.data(0, Qt.UserRole)
+            if entry and entry.path == remote_path:
+                return entry
+            for i in range(item.childCount()):
+                found = walk(item.child(i))
+                if found:
+                    return found
+            return None
+
+        root = tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            found = walk(root.child(i))
+            if found:
+                return found
+        return None
 
     def _log(self, msg: str):
         self.log_text.append(msg)

@@ -58,6 +58,7 @@ class TaskScheduler:
 
         # Task queue (priority queue)
         self.task_queue: Queue[str] = Queue()
+        self.queued_task_ids: set[str] = set()
 
         # Thread pool for executing tasks
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -100,7 +101,9 @@ class TaskScheduler:
         """
         with self.task_lock:
             self.tasks[task.task_id] = task
-            self.task_queue.put(task.task_id)
+            if task.task_id not in self.queued_task_ids:
+                self.task_queue.put(task.task_id)
+                self.queued_task_ids.add(task.task_id)
 
         self.logger.info(f"Added task {task.task_id}: {task.kind} {task.src} -> {task.dst}")
         return task.task_id
@@ -187,7 +190,9 @@ class TaskScheduler:
                 task.status = "pending"
                 task.paused = False
                 # Re-queue the task
-                self.task_queue.put(task_id)
+                if task_id not in self.queued_task_ids:
+                    self.task_queue.put(task_id)
+                    self.queued_task_ids.add(task_id)
                 self.logger.info(f"Resumed task {task_id[:8]}")
                 return True
 
@@ -220,7 +225,9 @@ class TaskScheduler:
                 task.skipped = False
                 
                 # Re-queue the task
-                self.task_queue.put(task_id)
+                if task_id not in self.queued_task_ids:
+                    self.task_queue.put(task_id)
+                    self.queued_task_ids.add(task_id)
                 self.logger.info(f"Restarting task {task_id[:8]}")
                 return True
 
@@ -235,6 +242,7 @@ class TaskScheduler:
                     task_id = self.task_queue.get(timeout=0.5)
 
                     with self.task_lock:
+                        self.queued_task_ids.discard(task_id)
                         task = self.tasks.get(task_id)
 
                     if task and task.status == "pending":

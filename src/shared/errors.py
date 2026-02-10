@@ -13,6 +13,7 @@ class ErrorCode(Enum):
     NETWORK_TIMEOUT = auto()
     REMOTE_DISCONNECT = auto()
     VALIDATION_FAILED = auto()
+    TRANSFER_FAILED = auto()
     MSCP_NOT_FOUND = auto()
     MSCP_EXIT_NONZERO = auto()
     UNKNOWN_ERROR = auto()

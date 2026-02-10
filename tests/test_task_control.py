@@ -64,7 +64,7 @@ def test_pause_resume_restart_cycle():
     assert mock_scheduler.restart_task("t1") is True
     assert task.status == "pending"
     assert task.error_message is None
-    assert mock_scheduler.task_queue.qsize() == 2  # Re-queued again
+    assert mock_scheduler.task_queue.qsize() == 1  # No duplicate enqueue for same task
 
 
 def test_restart_invalid_state():
