@@ -19,6 +19,8 @@ from src.shared.errors import PermissionError as SFPermissionError
 from src.shared.models import RemoteEntry, SiteConfig
 from src.shared.paths import ensure_in_sandbox, normalize_remote_path
 
+DEFAULT_STREAM_CHUNK_BYTES = 512 * 1024  # 512 KB
+
 
 class SftpEngine:
     """
@@ -284,7 +286,7 @@ class SftpEngine:
 
         try:
             file_size = os.path.getsize(local_path)
-            chunk_size = 131072  # 128KB chunks for better speed
+            chunk_size = DEFAULT_STREAM_CHUNK_BYTES
             
             # Determine mode based on offset
             mode = 'wb'
@@ -356,7 +358,7 @@ class SftpEngine:
             # Get remote file size
             attr = self.sftp_client.stat(normalized_path)
             file_size = attr.st_size or 0
-            chunk_size = 131072  # 128KB chunks
+            chunk_size = DEFAULT_STREAM_CHUNK_BYTES
             
             # Determine mode based on offset
             mode = 'wb'

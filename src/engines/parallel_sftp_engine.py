@@ -12,6 +12,7 @@ from typing import Callable, Optional, Tuple
 from src.engines.sftp_engine import SftpEngine
 from src.shared.errors import ErrorCode, SSHFerryError
 from src.shared.models import SiteConfig
+from src.shared.paths import ensure_in_sandbox, normalize_remote_path
 
 
 @dataclass(frozen=True)
@@ -24,10 +25,32 @@ class ParallelPreset:
 
 PARALLEL_PRESETS: dict[str, ParallelPreset] = {
     "low": ParallelPreset(workers=4, chunk_size=2 * 1024 * 1024),
-    "medium": ParallelPreset(workers=8, chunk_size=4 * 1024 * 1024),
-    "high": ParallelPreset(workers=12, chunk_size=8 * 1024 * 1024),
+    "medium": ParallelPreset(workers=10, chunk_size=4 * 1024 * 1024),
+    "high": ParallelPreset(workers=16, chunk_size=8 * 1024 * 1024),
 }
 DEFAULT_PARALLEL_THRESHOLD_BYTES = 50 * 1024 * 1024  # 50 MB
+
+
+def _env_int(name: str, default: int, min_value: int) -> int:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+        return max(min_value, value)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float, min_value: float) -> float:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+        return max(min_value, value)
+    except ValueError:
+        return default
 
 
 class ParallelSftpEngine:
@@ -51,11 +74,25 @@ class ParallelSftpEngine:
         self.max_workers = max_workers if max_workers is not None else preset.workers
         self.chunk_size = chunk_size if chunk_size is not None else preset.chunk_size
         self.min_workers = 2
-        self.warmup_batch_size = 3
-        self.warmup_delay_seconds = 0.25
+        self.warmup_batch_size = 4
+        self.warmup_delay_seconds = 0.08
         self.connect_retries = 3
         self.connect_backoff_seconds = 0.4
         self.degrade_after_failures = 2
+        self.max_chunk_retries = 4
+        self.max_workers = _env_int("SSHFERRY_PARALLEL_WORKERS", self.max_workers, 1)
+        self.chunk_size = _env_int("SSHFERRY_PARALLEL_CHUNK_BYTES", self.chunk_size, 64 * 1024)
+        self.warmup_batch_size = _env_int("SSHFERRY_PARALLEL_WARMUP_BATCH", self.warmup_batch_size, 1)
+        self.warmup_delay_seconds = _env_float(
+            "SSHFERRY_PARALLEL_WARMUP_DELAY",
+            self.warmup_delay_seconds,
+            0.0,
+        )
+        self.max_chunk_retries = _env_int(
+            "SSHFERRY_PARALLEL_MAX_CHUNK_RETRIES",
+            self.max_chunk_retries,
+            0,
+        )
         self.host_key = f"{site_config.username}@{site_config.host}:{site_config.port}"
 
     def _connect_with_retry(self, eng: SftpEngine) -> bool:
@@ -100,6 +137,8 @@ class ParallelSftpEngine:
         """
         Upload file in parallel using persistent connections.
         """
+        ensure_in_sandbox(remote_path, self.site_config.remote_root)
+        normalized_remote_path = normalize_remote_path(remote_path)
         file_size = os.path.getsize(local_path)
         
         if file_size < self.chunk_size:
@@ -107,7 +146,7 @@ class ParallelSftpEngine:
             engine = SftpEngine(self.site_config, self.logger)
             engine.connect()
             try:
-                engine.upload_file(local_path, remote_path, callback, check_interrupt)
+                engine.upload_file(local_path, normalized_remote_path, callback, check_interrupt)
             finally:
                 engine.disconnect()
             return
@@ -126,13 +165,15 @@ class ParallelSftpEngine:
         interrupt_event = threading.Event()
         last_reported = 0
         completed_chunks = 0
+        chunk_failures: dict[int, int] = {}
+        last_error: list[str] = []
 
         # Pre-allocate remote file
         init_engine = SftpEngine(self.site_config, self.logger)
         if not self._connect_with_retry(init_engine):
             raise SSHFerryError(ErrorCode.TRANSFER_FAILED, "Failed to establish initial upload connection")
         try:
-            with init_engine.sftp_client.open(remote_path, "wb") as f:
+            with init_engine.sftp_client.open(normalized_remote_path, "wb") as f:
                 if hasattr(f, "set_pipelined"):
                     f.set_pipelined(True)
                 try:
@@ -153,7 +194,7 @@ class ParallelSftpEngine:
                         connect_failures += 1
                     return
                 with open(local_path, 'rb') as f:
-                    with eng.sftp_client.open(remote_path, 'r+b') as rf:
+                    with eng.sftp_client.open(normalized_remote_path, 'r+b') as rf:
                         if hasattr(rf, "set_pipelined"):
                             rf.set_pipelined(True)
                         while not interrupt_event.is_set():
@@ -177,21 +218,41 @@ class ParallelSftpEngine:
                                 rf.seek(offset)
                                 rf.write(data)
 
+                                report_now = False
+                                report_value = 0
                                 with lock:
                                     nonlocal bytes_transferred, last_reported, completed_chunks
-                                    bytes_transferred += length
+                                    written = len(data)
+                                    bytes_transferred += written
                                     completed_chunks += 1
                                     if callback and (
                                         bytes_transferred == file_size
                                         or bytes_transferred - last_reported >= self.chunk_size
                                     ):
                                         last_reported = bytes_transferred
-                                        callback(bytes_transferred, file_size)
+                                        report_now = True
+                                        report_value = bytes_transferred
+                                if report_now:
+                                    callback(report_value, file_size)
                             except Exception as e:
-                                # Re-queue chunk for another worker and stop this worker.
-                                self.logger.warning(f"Upload chunk failed at offset {offset}: {e}")
+                                should_abort = False
+                                with lock:
+                                    retry_count = chunk_failures.get(offset, 0) + 1
+                                    chunk_failures[offset] = retry_count
+                                    if retry_count > self.max_chunk_retries:
+                                        should_abort = True
+                                        last_error[:] = [str(e)]
+                                if should_abort:
+                                    interrupt_event.set()
+                                    self.logger.error(
+                                        f"Upload chunk failed repeatedly at offset {offset}: {e}"
+                                    )
+                                    return
+                                self.logger.warning(
+                                    f"Upload chunk failed at offset {offset}, retry {retry_count}/{self.max_chunk_retries}: {e}"
+                                )
                                 queue.put((offset, length))
-                                return
+                                continue
                             finally:
                                 queue.task_done()
 
@@ -219,6 +280,11 @@ class ParallelSftpEngine:
             # Check for errors
             if check_interrupt and check_interrupt():
                 raise InterruptedError("Transfer interrupted")
+            if interrupt_event.is_set() and last_error:
+                raise SSHFerryError(
+                    ErrorCode.TRANSFER_FAILED,
+                    f"Parallel upload failed: {last_error[0]}",
+                )
             if bytes_transferred < file_size or completed_chunks < num_chunks:
                 raise SSHFerryError(ErrorCode.TRANSFER_FAILED, "Parallel upload failed")
 
@@ -232,11 +298,13 @@ class ParallelSftpEngine:
         """
         Download file in parallel.
         """
+        ensure_in_sandbox(remote_path, self.site_config.remote_root)
+        normalized_remote_path = normalize_remote_path(remote_path)
         # Get size
         init_engine = SftpEngine(self.site_config, self.logger)
         init_engine.connect()
         try:
-            attr = init_engine.stat(remote_path)
+            attr = init_engine.stat(normalized_remote_path)
             file_size = attr.size
         finally:
             init_engine.disconnect()
@@ -245,13 +313,15 @@ class ParallelSftpEngine:
             engine = SftpEngine(self.site_config, self.logger)
             engine.connect()
             try:
-                engine.download_file(remote_path, local_path, callback, check_interrupt)
+                engine.download_file(normalized_remote_path, local_path, callback, check_interrupt)
             finally:
                 engine.disconnect()
             return
 
         # Pre-allocate local
-        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        parent_dir = os.path.dirname(local_path)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
         with open(local_path, 'wb') as f:
             f.truncate(file_size)
 
@@ -268,6 +338,8 @@ class ParallelSftpEngine:
         last_reported = 0
         completed_chunks = 0
         connect_failures = 0
+        chunk_failures: dict[int, int] = {}
+        last_error: list[str] = []
 
         def worker_loop():
             nonlocal connect_failures
@@ -277,7 +349,7 @@ class ParallelSftpEngine:
                     with lock:
                         connect_failures += 1
                     return
-                with eng.sftp_client.open(remote_path, 'rb') as rf:
+                with eng.sftp_client.open(normalized_remote_path, 'rb') as rf:
                     with open(local_path, 'r+b') as f:
                         while not interrupt_event.is_set():
                             try:
@@ -300,20 +372,41 @@ class ParallelSftpEngine:
                                 f.seek(offset)
                                 f.write(data)
 
+                                report_now = False
+                                report_value = 0
                                 with lock:
                                     nonlocal bytes_transferred, last_reported, completed_chunks
-                                    bytes_transferred += length
+                                    downloaded = len(data)
+                                    bytes_transferred += downloaded
                                     completed_chunks += 1
                                     if callback and (
                                         bytes_transferred == file_size
                                         or bytes_transferred - last_reported >= self.chunk_size
                                     ):
                                         last_reported = bytes_transferred
-                                        callback(bytes_transferred, file_size)
+                                        report_now = True
+                                        report_value = bytes_transferred
+                                if report_now:
+                                    callback(report_value, file_size)
                             except Exception as e:
-                                self.logger.warning(f"Download chunk failed at offset {offset}: {e}")
+                                should_abort = False
+                                with lock:
+                                    retry_count = chunk_failures.get(offset, 0) + 1
+                                    chunk_failures[offset] = retry_count
+                                    if retry_count > self.max_chunk_retries:
+                                        should_abort = True
+                                        last_error[:] = [str(e)]
+                                if should_abort:
+                                    interrupt_event.set()
+                                    self.logger.error(
+                                        f"Download chunk failed repeatedly at offset {offset}: {e}"
+                                    )
+                                    return
+                                self.logger.warning(
+                                    f"Download chunk failed at offset {offset}, retry {retry_count}/{self.max_chunk_retries}: {e}"
+                                )
                                 queue.put((offset, length))
-                                return
+                                continue
                             finally:
                                 queue.task_done()
             except Exception as e:
@@ -339,5 +432,10 @@ class ParallelSftpEngine:
             
             if check_interrupt and check_interrupt():
                 raise InterruptedError("Transfer interrupted")
+            if interrupt_event.is_set() and last_error:
+                raise SSHFerryError(
+                    ErrorCode.TRANSFER_FAILED,
+                    f"Parallel download failed: {last_error[0]}",
+                )
             if bytes_transferred < file_size or completed_chunks < num_chunks:
                 raise SSHFerryError(ErrorCode.TRANSFER_FAILED, "Parallel download failed")

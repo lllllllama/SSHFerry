@@ -97,7 +97,7 @@ def test_parallel_upload(tmp_path, mock_sftp_engine):
         port=22,
         username="user", 
         auth_method="password",
-        remote_root="/root"
+        remote_root="/"
     )
     engine = ParallelSftpEngine(config, max_workers=2, chunk_size=chunk_size)
     
@@ -127,7 +127,7 @@ def test_parallel_download(tmp_path, mock_sftp_engine):
         port=22,
         username="user", 
         auth_method="password",
-        remote_root="/root"
+        remote_root="/"
     )
     engine = ParallelSftpEngine(config, max_workers=2, chunk_size=chunk_size)
     

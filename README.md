@@ -90,7 +90,8 @@ python -c "from src.shared.errors import ErrorCode; from src.shared.models impor
 
 - For large files, SSHFerry prefers accelerated transfer path selection.
 - Large files are automatically switched to optimized parallel SFTP chunk transfer.
-- Parallel transfer uses throughput presets (`low` / `medium` / `high`) and defaults to `high` for max speed.
+- Parallel transfer uses throughput presets (`low` / `medium` / `high`).
+- Default preset policy is direction-aware: upload uses `medium`, download uses `high`.
 
 ### Why fallback is faster now
 
@@ -100,11 +101,36 @@ python -c "from src.shared.errors import ErrorCode; from src.shared.models impor
 
 ### Optimization tips for best speed
 
-1. Keep current default preset (`high`) for best throughput.
+1. Keep current direction-aware defaults (`upload=medium`, `download=high`) as baseline.
 2. Use stable wired network when possible.
 3. Prefer key auth and reduce proxy-hop count.
 4. Resume interrupted transfers instead of restarting.
 5. Keep enough disk I/O headroom on both ends; chunked parallel transfer is sensitive to storage bottlenecks.
+
+### Benchmark your own server
+
+```bash
+python tools/benchmark_transfer.py --site "<your-site-name>" --size-mb 512 --iterations 2
+```
+
+- Modes can be customized with `--modes`, for example: `sftp,parallel:high,parallel:medium`.
+- Use benchmark results as your final tuning source, because host limits and RTT dominate real speed.
+
+### Observed improvement (ratio-based)
+
+- In a real remote test, `parallel` mode achieved about **10x to 16x** throughput compared with plain `sftp` on large files.
+- For that same test pattern:
+  - Download favored `parallel:high`.
+  - Upload favored `parallel:medium`.
+- These are **relative multipliers**, not fixed speeds. Your actual result depends on network bandwidth, RTT, server limits, and disk I/O.
+
+### Parallel tuning env vars
+
+- `SSHFERRY_PARALLEL_WORKERS`: override worker count.
+- `SSHFERRY_PARALLEL_CHUNK_BYTES`: override chunk size in bytes.
+- `SSHFERRY_PARALLEL_WARMUP_BATCH`: workers launched per warmup batch.
+- `SSHFERRY_PARALLEL_WARMUP_DELAY`: seconds between warmup batches.
+- `SSHFERRY_PARALLEL_MAX_CHUNK_RETRIES`: per-chunk retry limit.
 
 ## 🗂️ Project Layout
 

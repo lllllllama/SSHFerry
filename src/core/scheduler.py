@@ -35,6 +35,8 @@ class TaskScheduler:
         site_config: SiteConfig,
         max_workers: int = 3,
         parallel_preset: str = "high",
+        parallel_upload_preset: str = "medium",
+        parallel_download_preset: str = "high",
         parallel_threshold: int = DEFAULT_PARALLEL_THRESHOLD_BYTES,
         logger: Optional[logging.Logger] = None
     ):
@@ -44,13 +46,17 @@ class TaskScheduler:
         Args:
             site_config: Site configuration for SFTP connection
             max_workers: Maximum number of concurrent tasks
-            parallel_preset: Parallel transfer preset (low/medium/high)
+            parallel_preset: Legacy fallback parallel preset (low/medium/high)
+            parallel_upload_preset: Parallel preset for upload tasks
+            parallel_download_preset: Parallel preset for download tasks
             parallel_threshold: File size threshold for auto parallel mode (bytes)
             logger: Optional logger instance
         """
         self.site_config = site_config
         self.max_workers = max_workers
         self.parallel_preset = parallel_preset
+        self.parallel_upload_preset = parallel_upload_preset or parallel_preset
+        self.parallel_download_preset = parallel_download_preset or parallel_preset
         self.parallel_threshold = parallel_threshold
         self.logger = logger or logging.getLogger(__name__)
 
@@ -318,7 +324,7 @@ class TaskScheduler:
             if task.kind in ("upload", "download", "folder_upload", "folder_download") and task.status == "done":
                 duration = time.time() - (task.start_time or time.time())
                 self.metrics.record(TransferRecord(
-                    preset=self.parallel_preset,
+                    preset=self._metric_preset_for_task(task),
                     bytes_transferred=task.bytes_done,
                     duration_seconds=max(0.1, duration),
                     success=True,
@@ -346,7 +352,7 @@ class TaskScheduler:
             if task.kind in ("upload", "download", "folder_upload", "folder_download"):
                 duration = time.time() - (task.start_time or time.time())
                 self.metrics.record(TransferRecord(
-                    preset=self.parallel_preset,
+                    preset=self._metric_preset_for_task(task),
                     bytes_transferred=task.bytes_done,
                     duration_seconds=max(0.1, duration),
                     success=False,
@@ -373,7 +379,7 @@ class TaskScheduler:
             if task.kind in ("upload", "download", "folder_upload", "folder_download"):
                 duration = time.time() - (task.start_time or time.time())
                 self.metrics.record(TransferRecord(
-                    preset=self.parallel_preset,
+                    preset=self._metric_preset_for_task(task),
                     bytes_transferred=task.bytes_done,
                     duration_seconds=max(0.1, duration),
                     success=False,
@@ -559,7 +565,7 @@ class TaskScheduler:
         p_engine = ParallelSftpEngine(
             self.site_config,
             self.logger,
-            preset_name=self.parallel_preset,
+            preset_name=self.parallel_upload_preset,
         )
         p_engine.upload_file(
             task.src,
@@ -589,7 +595,7 @@ class TaskScheduler:
         p_engine = ParallelSftpEngine(
             self.site_config,
             self.logger,
-            preset_name=self.parallel_preset,
+            preset_name=self.parallel_download_preset,
         )
         p_engine.download_file(
             task.src,
@@ -597,6 +603,16 @@ class TaskScheduler:
             callback=progress_callback,
             check_interrupt=check_interrupt,
         )
+
+    def _metric_preset_for_task(self, task: Task) -> str:
+        """Resolve metric preset label from task engine/kind."""
+        if task.engine != "parallel":
+            return task.engine
+        if task.kind == "upload":
+            return self.parallel_upload_preset
+        if task.kind == "download":
+            return self.parallel_download_preset
+        return self.parallel_preset
 
     def _execute_delete(self, task: Task):
         """Execute delete task."""
