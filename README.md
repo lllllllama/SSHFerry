@@ -64,6 +64,39 @@ chmod +x run.sh
 python3 -m src.app.main
 ```
 
+## 📦 Publish As App (Windows)
+
+Build a distributable GUI app (`SSHFerry.exe`) with PyInstaller:
+
+```powershell
+python -m pip install ".[build]"
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows.ps1
+```
+
+Or use the wrapper:
+
+```bat
+tools\build_windows.bat
+```
+
+Output package directory:
+
+```text
+release/SSHFerry-<version>-windows/
+```
+
+The script also generates:
+
+```text
+release/SSHFerry-<version>-windows.zip
+release/SSHFerry-<version>-windows.sha256
+```
+
+Recommended release flow:
+
+1. Upload the `.zip` file.
+2. Publish the `.sha256` checksum alongside it for integrity verification.
+
 ## ✅ Functional Verification
 
 ### Automated checks

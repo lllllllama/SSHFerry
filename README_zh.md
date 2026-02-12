@@ -64,6 +64,39 @@ chmod +x run.sh
 python3 -m src.app.main
 ```
 
+## 📦 发布为应用（Windows）
+
+使用 PyInstaller 打包为可分发 GUI 应用（`SSHFerry.exe`）：
+
+```powershell
+python -m pip install ".[build]"
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows.ps1
+```
+
+也可使用封装脚本：
+
+```bat
+tools\build_windows.bat
+```
+
+打包产物目录：
+
+```text
+release/SSHFerry-<version>-windows/
+```
+
+脚本还会自动生成：
+
+```text
+release/SSHFerry-<version>-windows.zip
+release/SSHFerry-<version>-windows.sha256
+```
+
+建议发布流程：
+
+1. 上传 `.zip` 安装包。
+2. 同时发布 `.sha256` 校验文件，便于用户校验完整性。
+
 ## ✅ 功能验证
 
 ### 自动化验证

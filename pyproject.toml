@@ -16,6 +16,9 @@ dev = [
     "pytest>=7.4.0",
     "ruff>=0.1.0",
 ]
+build = [
+    "pyinstaller>=6.0.0",
+]
 
 [build-system]
 requires = ["setuptools>=68.0"]
