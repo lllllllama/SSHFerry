@@ -210,7 +210,7 @@ class SiteEditorDialog(QDialog):
             QMessageBox.warning(
                 self,
                 "Missing Required Fields",
-                f"Please fill in the following fields:\n• " + "\n• ".join(missing)
+                "Please fill in the following fields:\n- " + "\n- ".join(missing)
             )
             return
 
@@ -219,10 +219,10 @@ class SiteEditorDialog(QDialog):
 
         # Create configuration
         config = SiteConfig(
-            name=self.name_edit.text(),
-            host=self.host_edit.text(),
+            name=self.name_edit.text().strip(),
+            host=self.host_edit.text().strip(),
             port=self.port_spin.value(),
-            username=self.username_edit.text(),
+            username=self.username_edit.text().strip(),
             auth_method=auth_method,
             remote_root=remote_root,
         )

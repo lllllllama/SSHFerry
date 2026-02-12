@@ -1,7 +1,6 @@
 """Site configuration storage."""
 import json
 import logging
-import platform
 from pathlib import Path
 from typing import List, Optional
 

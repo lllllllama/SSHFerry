@@ -62,16 +62,20 @@ class ListDirThread(QThread):
         self.parent_item = parent_item
 
     def run(self):
+        engine = SftpEngine(self.site_config)
         try:
-            engine = SftpEngine(self.site_config)
             engine.connect()
             entries = engine.list_dir(self.remote_path)
-            engine.disconnect()
             self.list_completed.emit(self.remote_path, entries, self.parent_item)
         except SSHFerryError as e:
             self.list_failed.emit(self.remote_path, f"[{e.code.name}] {e.message}")
         except Exception as e:
             self.list_failed.emit(self.remote_path, str(e))
+        finally:
+            try:
+                engine.disconnect()
+            except Exception:
+                pass
 
 
 class RemoteOpThread(QThread):
@@ -89,16 +93,60 @@ class RemoteOpThread(QThread):
         self.parent_item = kwargs.get('parent_item')
 
     def run(self):
+        engine = SftpEngine(self.site_config)
         try:
-            engine = SftpEngine(self.site_config)
             engine.connect()
             getattr(engine, self.func_name)(*self.args)
-            engine.disconnect()
             self.op_done.emit()
         except SSHFerryError as e:
             self.op_failed.emit(f"[{e.code.name}] {e.message}")
         except Exception as e:
             self.op_failed.emit(str(e))
+        finally:
+            try:
+                engine.disconnect()
+            except Exception:
+                pass
+
+
+class ScanRemoteDirThread(QThread):
+    """Background remote directory scan for recursive file/byte totals."""
+    scan_completed = Signal(str, int, int)  # path, total_files, total_bytes
+    scan_failed = Signal(str, str)          # path, error
+
+    def __init__(self, site_config: SiteConfig, remote_path: str):
+        super().__init__()
+        self.site_config = site_config
+        self.remote_path = remote_path
+
+    def run(self):
+        engine = SftpEngine(self.site_config)
+        try:
+            engine.connect()
+            total_files, total_bytes = self._scan_recursive(engine, self.remote_path)
+            self.scan_completed.emit(self.remote_path, total_files, total_bytes)
+        except SSHFerryError as e:
+            self.scan_failed.emit(self.remote_path, f"[{e.code.name}] {e.message}")
+        except Exception as e:
+            self.scan_failed.emit(self.remote_path, str(e))
+        finally:
+            try:
+                engine.disconnect()
+            except Exception:
+                pass
+
+    def _scan_recursive(self, engine: SftpEngine, path: str) -> tuple[int, int]:
+        total_files = 0
+        total_bytes = 0
+        for entry in engine.list_dir(path):
+            if entry.is_dir:
+                sub_files, sub_bytes = self._scan_recursive(engine, entry.path)
+                total_files += sub_files
+                total_bytes += sub_bytes
+            else:
+                total_files += 1
+                total_bytes += entry.size
+        return total_files, total_bytes
 
 
 # ---------------------------------------------------------------------------
@@ -418,23 +466,6 @@ class MainWindow(QMainWindow):
     # Site management
     # ------------------------------------------------------------------
 
-    def _add_test_site(self):
-        password = os.environ.get("APP_SSH_PASSWORD")
-        site = SiteConfig(
-            name="AutoDL Test",
-            host="connect.westb.seetacloud.com",
-            port=16921,
-            username="root",
-            auth_method="password",
-            password=password,
-            remote_root="/",
-        )
-        self.sites.append(site)
-        self.site_list.addItem(site.name)
-        self._log(f"Added test site: {site.name}")
-        if not password:
-            self._log("  (Set APP_SSH_PASSWORD env var or enter via Site Editor)")
-
     def _add_site(self):
         dlg = SiteEditorDialog(parent=self)
         dlg.site_saved.connect(self._on_site_saved)
@@ -443,6 +474,9 @@ class MainWindow(QMainWindow):
     def _on_site_saved(self, cfg: SiteConfig):
         self.sites.append(cfg)
         self.site_list.addItem(cfg.name)
+        self.site_list.setCurrentRow(len(self.sites) - 1)
+        self.current_site = cfg
+        self._save_sites()
         self._log(f"Saved site: {cfg.name}")
 
     def _on_site_selected(self, item: QListWidgetItem):
@@ -816,35 +850,23 @@ class MainWindow(QMainWindow):
 
     def _enqueue_dir_download(self, remote_dir: str, local_parent: str):
         """Create a single folder download task for the remote directory."""
-        # We need to scan the remote dir first (in a thread) to count files
-        t = ListDirThread(self.current_site, remote_dir)
+        t = ScanRemoteDirThread(self.current_site, remote_dir)
 
-        def on_listed(path, entries, _parent_item):
-            dir_name = os.path.basename(remote_dir)
+        def on_scanned(path: str, total_files: int, total_bytes: int):
+            dir_name = os.path.basename(path)
             local_dir = os.path.join(local_parent, dir_name)
-            
-            # Count files and total size (non-recursive for now, scheduler handles recursion)
-            total_files = 0
-            total_bytes = 0
-            
-            def count_entries(ents):
-                nonlocal total_files, total_bytes
-                for ent in ents:
-                    if not ent.is_dir:
-                        total_files += 1
-                        total_bytes += ent.size
-            
-            count_entries(entries)
-            
-            if total_files > 0 or any(e.is_dir for e in entries):
-                task = TaskScheduler.create_folder_download_task(
-                    remote_dir, local_dir, max(1, total_files), total_bytes
-                )
-                self.scheduler.add_task(task)
-                self._log(f"Queued folder download: {dir_name} ({total_files} files, {self._format_size(total_bytes)})")
 
-        t.list_completed.connect(on_listed)
-        t.list_failed.connect(lambda p, m: self._log(f"Download list failed: {m}"))
+            task = TaskScheduler.create_folder_download_task(
+                path, local_dir, max(1, total_files), total_bytes
+            )
+            self.scheduler.add_task(task)
+            self._log(
+                f"Queued folder download: {dir_name} "
+                f"({total_files} files, {self._format_size(total_bytes)})"
+            )
+
+        t.scan_completed.connect(on_scanned)
+        t.scan_failed.connect(lambda p, m: self._log(f"Download scan failed ({p}): {m}"))
         self._start_thread(t)
 
     # ------------------------------------------------------------------
@@ -931,7 +953,7 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def _load_saved_sites(self):
-        """Load saved sites or add test site if none exist."""
+        """Load saved sites from persistent storage."""
         saved = self.site_store.load()
         if saved:
             self.sites = saved
@@ -939,7 +961,8 @@ class MainWindow(QMainWindow):
                 self.site_list.addItem(site.name)
             self._log(f"Loaded {len(saved)} saved sites")
         else:
-            self._add_test_site()
+            self._log("No saved sites found. Click 'Add Site' to create your first connection.")
+            self.statusBar().showMessage("No saved sites. Add a site to get started.", 5000)
 
     def _save_sites(self):
         """Save sites to persistent storage."""

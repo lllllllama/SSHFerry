@@ -28,11 +28,16 @@ It focuses on three goals: **safe remote operations**, **practical transfer beha
 ## 🧭 Quick Start
 
 1. Add a site (manual form or paste SSH command).
-2. `remote_root` can be left empty; it will default to `/` (full filesystem scope). You can narrow it to a subdirectory if needed.
+2. Set `remote_root` to a dedicated project directory whenever possible (recommended). If left empty, it defaults to `/` (full filesystem scope).
 3. Run connection check.
 4. Connect and browse remote tree.
 5. Upload/download files or folders.
 6. Monitor and control tasks in Task Center.
+
+### First-run note
+
+- SSHFerry no longer auto-creates demo/test sites on startup.
+- If site list is empty, click `Add Site` to create your first connection.
 
 ## 📦 Install
 
@@ -119,3 +124,4 @@ tests/        # Pytest test suite
 
 - Passwords are runtime-only and not persisted by `SiteStore`.
 - Current positioning: personal and educational use.
+- For safer operations, prefer least-privilege accounts and a non-root `remote_root`.
