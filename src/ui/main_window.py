@@ -408,6 +408,7 @@ class MainWindow(QMainWindow):
 
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
+        self.log_text.document().setMaximumBlockCount(1500)
         bottom_splitter.addWidget(self.log_text)
         bottom_splitter.setStretchFactor(0, 2)
         bottom_splitter.setStretchFactor(1, 1)
@@ -436,6 +437,7 @@ class MainWindow(QMainWindow):
         # Task refresh timer
         self._task_timer = QTimer()
         self._task_timer.timeout.connect(self._refresh_tasks)
+        self._task_timer.start(350)
 
     def _create_menu_bar(self):
         """Create the application menu bar."""
@@ -565,7 +567,7 @@ class MainWindow(QMainWindow):
 
         self.scheduler = TaskScheduler(self.current_site, logger=self.logger)
         self.scheduler.start()
-        self._task_timer.start(500)
+        self._task_timer.start(350)
 
         self.conn_label.setText(f"Connected: {self.current_site.name}")
         self._list_remote_dir(self.current_site.remote_root)
@@ -578,6 +580,7 @@ class MainWindow(QMainWindow):
         if not self.current_site:
             return
         self._log(f"Listing {path}")
+        self.statusBar().showMessage(f"Listing remote path: {path}")
         t = ListDirThread(self.current_site, path, parent_item)
         t.list_completed.connect(self._on_list_completed)
         t.list_failed.connect(self._on_list_failed)
@@ -597,9 +600,11 @@ class MainWindow(QMainWindow):
             self.remote_panel.set_root_entries(entries)
         
         self._log(f"  {len(entries)} items in {path}")
+        self.statusBar().showMessage(f"Loaded {len(entries)} items from {path}", 2500)
 
     def _on_list_failed(self, path: str, msg: str):
         self._log(f"List failed ({path}): {msg}")
+        self.statusBar().showMessage(f"List failed: {path}", 4000)
         QMessageBox.critical(self, "Error", msg)
 
     def _on_remote_entry_activated(self, entry: RemoteEntry):

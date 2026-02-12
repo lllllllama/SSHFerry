@@ -2,7 +2,7 @@
 import time
 from typing import Optional
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -37,13 +37,11 @@ class TaskCenterPanel(QWidget):
         super().__init__(parent)
         self.tasks: dict[str, Task] = {}
         self._pending_update = False
+        self._last_signature: tuple = ()
+        self._last_row_count = 0
+        self._refresh_count = 0
 
         self._init_ui()
-
-        # Set up timer to refresh task display (1 second interval to reduce load)
-        self.refresh_timer = QTimer()
-        self.refresh_timer.timeout.connect(self.refresh_tasks)
-        self.refresh_timer.start(1000)  # Refresh every 1s
 
     def _init_ui(self):
         """Initialize UI components."""
@@ -54,6 +52,9 @@ class TaskCenterPanel(QWidget):
         title_label = QLabel("Task Center")
         title_label.setStyleSheet("font-weight: bold; font-size: 14px; padding: 5px;")
         layout.addWidget(title_label)
+        self.summary_label = QLabel("")
+        self.summary_label.setStyleSheet("color: #666; padding: 0 5px 5px 5px;")
+        layout.addWidget(self.summary_label)
 
         # Task table
         self.table = QTableWidget()
@@ -64,6 +65,7 @@ class TaskCenterPanel(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.verticalHeader().setVisible(False)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
@@ -116,6 +118,8 @@ class TaskCenterPanel(QWidget):
     def refresh_tasks(self):
         """Refresh the task table display with performance optimizations."""
         if not self.tasks:
+            self.summary_label.setText("No tasks")
+            self._last_signature = ()
             self.table.setRowCount(0)
             return
 
@@ -141,8 +145,30 @@ class TaskCenterPanel(QWidget):
         # Limit visible tasks to prevent UI slowdown
         visible_tasks = sorted_tasks[:MAX_VISIBLE_TASKS]
         hidden_count = len(sorted_tasks) - len(visible_tasks)
+        self.summary_label.setText(
+            f"Showing {len(visible_tasks)} / {len(sorted_tasks)} tasks"
+            + (f" ({hidden_count} hidden)" if hidden_count > 0 else "")
+        )
+
+        signature = tuple(
+            (
+                t.task_id,
+                t.status,
+                int(t.progress_percent * 10),
+                int(t.speed),
+                t.subtask_done,
+                t.subtask_count,
+                t.current_file,
+            )
+            for t in visible_tasks
+        )
+        if signature == self._last_signature:
+            return
+        self._last_signature = signature
+        self._refresh_count += 1
         
         # Batch update - disable updates during populate
+        self.table.blockSignals(True)
         self.table.setUpdatesEnabled(False)
         self.table.setRowCount(len(visible_tasks))
 
@@ -225,8 +251,11 @@ class TaskCenterPanel(QWidget):
                 self.table.selectRow(row)
 
         # Re-enable updates and resize
+        self.table.blockSignals(False)
         self.table.setUpdatesEnabled(True)
-        self.table.resizeColumnsToContents()
+        if self._last_row_count != len(visible_tasks) or (self._refresh_count % 15 == 0):
+            self.table.resizeColumnsToContents()
+            self._last_row_count = len(visible_tasks)
 
         # Update button states based on checkboxes primarily, fallback to selection if needed?
         # User wants batch control.

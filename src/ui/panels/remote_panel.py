@@ -1,4 +1,4 @@
-"""Remote file panel for displaying remote directory contents."""
+﻿"""Remote file panel for displaying remote directory contents."""
 import os
 
 from PySide6.QtCore import QByteArray, QMimeData, QTimer, Qt, Signal
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
+    QStyle,
 )
 
 from src.shared.models import RemoteEntry
@@ -135,6 +136,8 @@ class RemotePanel(QWidget):
         self.tree.setColumnCount(4)
         self.tree.setHeaderLabels(["Name", "Type", "Size", "Modified"])
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.tree.setUniformRowHeights(True)
+        self.tree.setAnimated(True)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
         self.tree.itemExpanded.connect(self._on_item_expanded)
@@ -204,9 +207,11 @@ class RemotePanel(QWidget):
             # Create item
             child = QTreeWidgetItem(item)
             
-            # Name & Icon
-            icon = "📁" if entry.is_dir else "📄"
-            child.setText(0, f"{icon} {entry.name}")
+            # Name & icon
+            child.setText(0, entry.name)
+            style = self.tree.style()
+            std_icon = style.standardIcon(QStyle.SP_DirIcon) if entry.is_dir else style.standardIcon(QStyle.SP_FileIcon)
+            child.setIcon(0, std_icon)
             child.setFont(0, self._get_font(bold=entry.is_dir))
             
             # Metadata
@@ -445,4 +450,5 @@ class RemotePanel(QWidget):
             "}\n"
         )
         self.tree.setStyleSheet(self._base_tree_stylesheet + override)
+
 
