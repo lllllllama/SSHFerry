@@ -839,7 +839,7 @@ class MainWindow(QMainWindow):
 
     def _format_size(self, size: int) -> str:
         """Format size in human readable format."""
-        for unit in ['B', 'KB', 'MB', 'GB']:
+        for unit in ["Byte", "KB", "MB", "GB"]:
             if size < 1024:
                 return f"{size:.1f} {unit}"
             size /= 1024
@@ -866,14 +866,14 @@ class MainWindow(QMainWindow):
             self.scheduler.add_task(task)
             self._log(f"Queued download [{engine}]: {entry.name} -> {local_path}")
 
-    def _download_paths(self, remote_paths: list):
+    def _download_paths(self, remote_paths: list, target_local_dir: str):
         """Handle drag-drop download from remote panel."""
         if not self._ensure_site() or not self.scheduler:
             return
         if not remote_paths:
             return
 
-        local_dir = self.local_panel.get_current_dir()
+        local_dir = target_local_dir or self.local_panel.get_current_dir()
 
         for remote_path in remote_paths:
             entry = self._find_remote_entry_by_path(remote_path)

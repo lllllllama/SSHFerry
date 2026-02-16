@@ -427,7 +427,7 @@ class TaskCenterPanel(QWidget):
     @staticmethod
     def _format_size(size: int) -> str:
         """Format file size in human-readable form."""
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        for unit in ["Byte", "KB", "MB", "GB", "TB"]:
             if size < 1024.0:
                 return f"{size:.1f} {unit}"
             size /= 1024.0

@@ -104,7 +104,7 @@ class LocalPanel(QWidget):
 
     file_selected = Signal(str)  # full path of selected file
     dir_changed = Signal(str)  # current directory changed
-    files_dropped = Signal(list)  # files dropped from remote (for download)
+    files_dropped = Signal(list, str)  # remote paths, target local directory
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -269,7 +269,8 @@ class LocalPanel(QWidget):
         if event.mimeData().hasFormat("application/x-sshferry-remote"):
             data = event.mimeData().data("application/x-sshferry-remote")
             paths = data.data().decode("utf-8").split("\n")
-            self.files_dropped.emit(paths)
+            target_dir = self._target_dir_from_pos(event.pos())
+            self.files_dropped.emit(paths, target_dir)
             self._stop_drag_animation()
             event.acceptProposedAction()
 
@@ -284,6 +285,15 @@ class LocalPanel(QWidget):
         if os.path.isfile(path):
             return idx.parent()
         return idx
+
+    def _target_dir_from_pos(self, panel_pos) -> str:
+        """Resolve drop target local directory from panel coordinates."""
+        idx = self._target_index_from_pos(panel_pos)
+        if idx.isValid():
+            path = self.model.filePath(idx)
+            if os.path.isdir(path):
+                return path
+        return self.current_dir
 
     def _set_drag_target_from_pos(self, panel_pos):
         """Highlight hovered target directory during drag."""
