@@ -1,10 +1,11 @@
 """Tests for task control (pause/resume/restart) and interactivity."""
+import os
 import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 from src.core.scheduler import TaskScheduler
-from src.shared.models import SiteConfig, Task
+from src.shared.models import RemoteEntry, SiteConfig, Task
 
 
 def create_mock_scheduler():
@@ -53,7 +54,7 @@ def test_pause_resume_restart_cycle():
     assert mock_scheduler.resume_task("t1") is True
     assert task.status == "pending"
     assert task.paused is False
-    assert mock_scheduler.task_queue.qsize() == 1
+    assert mock_scheduler.pending_task_count() == 1
     
     # 3. Simulate failure
     with mock_scheduler.task_lock:
@@ -64,7 +65,7 @@ def test_pause_resume_restart_cycle():
     assert mock_scheduler.restart_task("t1") is True
     assert task.status == "pending"
     assert task.error_message is None
-    assert mock_scheduler.task_queue.qsize() == 1  # No duplicate enqueue for same task
+    assert mock_scheduler.pending_task_count() == 1  # No duplicate enqueue for same task
 
 
 def test_restart_invalid_state():
@@ -101,3 +102,43 @@ def test_restart_done_task():
     assert mock_scheduler.restart_task("t3") is True
     assert task.status == "pending"
     assert task.bytes_done == 0
+
+
+def test_folder_download_updates_progress_during_file_transfer(tmp_path):
+    scheduler = create_mock_scheduler()
+    task = Task(
+        task_id="fd1",
+        kind="folder_download",
+        engine="sftp",
+        src="/remote",
+        dst=str(tmp_path / "dl"),
+        bytes_total=1000,
+        subtask_count=1,
+    )
+    task.start_time = time.time()
+    progress_snapshots: list[int] = []
+
+    class FakeEngine:
+        def list_dir(self, _path):
+            return [
+                RemoteEntry(
+                    name="a.bin",
+                    path="/remote/a.bin",
+                    is_dir=False,
+                    size=1000,
+                    mtime=time.time(),
+                )
+            ]
+
+        def download_file(self, _src, _dst, callback=None, check_interrupt=None, offset=0):
+            if callback:
+                callback(400, 1000)
+                progress_snapshots.append(task.bytes_done)
+                callback(1000, 1000)
+
+    scheduler._download_dir_recursive(FakeEngine(), task, "/remote", str(tmp_path / "dl"))
+
+    assert task.subtask_done == 1
+    assert task.bytes_done == 1000
+    assert progress_snapshots == [400]
+    assert os.path.isdir(str(tmp_path / "dl"))

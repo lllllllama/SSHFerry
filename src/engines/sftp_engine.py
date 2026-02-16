@@ -19,7 +19,7 @@ from src.shared.errors import PermissionError as SFPermissionError
 from src.shared.models import RemoteEntry, SiteConfig
 from src.shared.paths import ensure_in_sandbox, normalize_remote_path
 
-DEFAULT_STREAM_CHUNK_BYTES = 512 * 1024  # 512 KB
+DEFAULT_STREAM_CHUNK_BYTES = 4 * 1024 * 1024  # 4 MB
 
 
 class SftpEngine:
@@ -300,6 +300,8 @@ class SftpEngine:
                     local_file.seek(offset)
                     
                 with self.sftp_client.open(normalized_path, mode) as remote_file:
+                    if hasattr(remote_file, "set_pipelined"):
+                        remote_file.set_pipelined(True)
                     if offset > 0 and mode == 'wb':
                         # Should not happen if logic is correct, but 'ab' implies append.
                         # Some SFTP servers might not support 'ab' correctly without seek?
@@ -368,6 +370,13 @@ class SftpEngine:
             bytes_transferred = offset
             
             with self.sftp_client.open(normalized_path, 'rb') as remote_file:
+                if hasattr(remote_file, "prefetch"):
+                    try:
+                        remote_file.prefetch(file_size=file_size)
+                    except TypeError:
+                        remote_file.prefetch(file_size)
+                    except Exception:
+                        pass
                 if offset > 0:
                     remote_file.seek(offset)
                     

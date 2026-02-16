@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -66,7 +67,16 @@ class TaskCenterPanel(QWidget):
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(True)
+        header.setSectionResizeMode(0, QHeaderView.Fixed)       # checkbox
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(6, QHeaderView.Interactive)
+        self.table.setColumnWidth(6, 320)
         self.table.verticalHeader().setVisible(False)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         # Handle checkbox changes
@@ -239,11 +249,13 @@ class TaskCenterPanel(QWidget):
             self.table.setItem(row, 5, speed_item)
 
             # Source
-            src_item = QTableWidgetItem(task.src)
+            src_item = QTableWidgetItem(self._elide_middle(task.src, 70))
+            src_item.setToolTip(task.src)
             self.table.setItem(row, 6, src_item)
 
             # Destination
-            dst_item = QTableWidgetItem(task.dst)
+            dst_item = QTableWidgetItem(self._elide_middle(task.dst, 70))
+            dst_item.setToolTip(task.dst)
             self.table.setItem(row, 7, dst_item)
 
             # Restore selection if it was the same task
@@ -420,3 +432,11 @@ class TaskCenterPanel(QWidget):
                 return f"{size:.1f} {unit}"
             size /= 1024.0
         return f"{size:.1f} PB"
+
+    @staticmethod
+    def _elide_middle(text: str, max_len: int) -> str:
+        """Elide long text in the middle for better table readability."""
+        if len(text) <= max_len:
+            return text
+        keep = max(8, (max_len - 3) // 2)
+        return f"{text[:keep]}...{text[-keep:]}"

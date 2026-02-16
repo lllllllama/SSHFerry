@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 _PERSIST_FIELDS = [
     "name", "host", "port", "username", "auth_method", "remote_root",
     "key_path", "proxy_jump", "ssh_config_path", "ssh_options",
+    "default_transfer_protocol",
 ]
 
 
@@ -50,6 +51,7 @@ class SiteStore:
                     proxy_jump=item.get("proxy_jump"),
                     ssh_config_path=item.get("ssh_config_path"),
                     ssh_options=item.get("ssh_options", []),
+                    default_transfer_protocol=item.get("default_transfer_protocol", "sftp"),
                 ))
             logger.info(f"Loaded {len(sites)} sites from {self.path}")
             return sites

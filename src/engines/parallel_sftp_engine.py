@@ -215,6 +215,11 @@ class ParallelSftpEngine:
                             try:
                                 f.seek(offset)
                                 data = f.read(length)
+                                if len(data) != length:
+                                    raise IOError(
+                                        f"Local chunk read size mismatch at offset {offset}: "
+                                        f"expected {length}, got {len(data)}"
+                                    )
                                 rf.seek(offset)
                                 rf.write(data)
 
@@ -302,7 +307,11 @@ class ParallelSftpEngine:
         normalized_remote_path = normalize_remote_path(remote_path)
         # Get size
         init_engine = SftpEngine(self.site_config, self.logger)
-        init_engine.connect()
+        if not self._connect_with_retry(init_engine):
+            raise SSHFerryError(
+                ErrorCode.TRANSFER_FAILED,
+                "Failed to establish initial download connection",
+            )
         try:
             attr = init_engine.stat(normalized_remote_path)
             file_size = attr.size
@@ -369,6 +378,11 @@ class ParallelSftpEngine:
                             try:
                                 rf.seek(offset)
                                 data = rf.read(length)
+                                if len(data) != length:
+                                    raise IOError(
+                                        f"Remote chunk read size mismatch at offset {offset}: "
+                                        f"expected {length}, got {len(data)}"
+                                    )
                                 f.seek(offset)
                                 f.write(data)
 

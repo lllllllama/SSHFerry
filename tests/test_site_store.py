@@ -47,3 +47,41 @@ def test_load_defaults_empty_remote_root_to_slash(tmp_path):
 
     assert len(loaded) == 1
     assert loaded[0].remote_root == "/"
+
+
+def test_default_transfer_protocol_persisted_and_backward_compatible(tmp_path):
+    path = tmp_path / "sites.json"
+    store = SiteStore(path=path)
+    site = SiteConfig(
+        name="demo",
+        host="example.com",
+        port=22,
+        username="alice",
+        auth_method="password",
+        remote_root="/work",
+        default_transfer_protocol="scp",
+    )
+    store.save([site])
+
+    loaded = store.load()
+    assert len(loaded) == 1
+    assert loaded[0].default_transfer_protocol == "scp"
+
+    # Backward compatibility: missing key defaults to sftp
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "legacy",
+                    "host": "old.example.com",
+                    "port": 22,
+                    "username": "bob",
+                    "auth_method": "password",
+                    "remote_root": "/",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    loaded_legacy = store.load()
+    assert loaded_legacy[0].default_transfer_protocol == "sftp"

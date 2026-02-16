@@ -4,6 +4,7 @@ from typing import List, Optional
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -354,20 +355,28 @@ class MainWindow(QMainWindow):
         btn_add.clicked.connect(self._add_site)
         left_lay.addWidget(btn_add)
 
-        btn_edit = QPushButton("Edit Site")
-        btn_edit.clicked.connect(self._edit_site)
-        left_lay.addWidget(btn_edit)
+        self.btn_edit_site = QPushButton("Edit Site")
+        self.btn_edit_site.clicked.connect(self._edit_site)
+        left_lay.addWidget(self.btn_edit_site)
 
-        btn_check = QPushButton("Check Connection")
-        btn_check.clicked.connect(self._check_connection)
-        left_lay.addWidget(btn_check)
+        self.btn_check_connection = QPushButton("Check Connection")
+        self.btn_check_connection.clicked.connect(self._check_connection)
+        left_lay.addWidget(self.btn_check_connection)
 
-        btn_connect = QPushButton("Connect")
-        btn_connect.clicked.connect(self._connect_to_site)
-        left_lay.addWidget(btn_connect)
+        self.btn_connect_site = QPushButton("Connect")
+        self.btn_connect_site.clicked.connect(self._connect_to_site)
+        left_lay.addWidget(self.btn_connect_site)
 
         self.conn_label = QLabel("Disconnected")
+        self.conn_label.setStyleSheet("color: #b42318; font-weight: 600;")
         left_lay.addWidget(self.conn_label)
+
+        left_lay.addWidget(QLabel("Task Protocol Override"))
+        self.transfer_override_combo = QComboBox()
+        self.transfer_override_combo.addItem("Auto (Site Default)", "auto")
+        self.transfer_override_combo.addItem("SFTP", "sftp")
+        self.transfer_override_combo.addItem("SCP", "scp")
+        left_lay.addWidget(self.transfer_override_combo)
         left.setMaximumWidth(220)
 
         # --- Centre: dual-panel ---
@@ -438,6 +447,7 @@ class MainWindow(QMainWindow):
         self._task_timer = QTimer()
         self._task_timer.timeout.connect(self._refresh_tasks)
         self._task_timer.start(350)
+        self._update_site_action_buttons()
 
     def _create_menu_bar(self):
         """Create the application menu bar."""
@@ -478,6 +488,7 @@ class MainWindow(QMainWindow):
         self.site_list.addItem(cfg.name)
         self.site_list.setCurrentRow(len(self.sites) - 1)
         self.current_site = cfg
+        self._update_site_action_buttons()
         self._save_sites()
         self._log(f"Saved site: {cfg.name}")
 
@@ -485,6 +496,7 @@ class MainWindow(QMainWindow):
         idx = self.site_list.row(item)
         if 0 <= idx < len(self.sites):
             self.current_site = self.sites[idx]
+            self._update_site_action_buttons()
             self._log(f"Selected: {self.current_site.name}")
 
     def _edit_site(self):
@@ -516,6 +528,7 @@ class MainWindow(QMainWindow):
             item.setText(cfg.name)
             
         self._log(f"Updated site: {cfg.name}")
+        self._update_site_action_buttons()
         self._save_sites()
 
     # ------------------------------------------------------------------
@@ -561,6 +574,8 @@ class MainWindow(QMainWindow):
 
         self._log(f"Connecting to {self.current_site.name}...")
         self.conn_label.setText("Connecting...")
+        self.conn_label.setStyleSheet("color: #b54708; font-weight: 600;")
+        self.btn_connect_site.setEnabled(False)
 
         if self.scheduler:
             self.scheduler.stop()
@@ -570,6 +585,8 @@ class MainWindow(QMainWindow):
         self._task_timer.start(350)
 
         self.conn_label.setText(f"Connected: {self.current_site.name}")
+        self.conn_label.setStyleSheet("color: #067647; font-weight: 600;")
+        self.btn_connect_site.setEnabled(True)
         self._list_remote_dir(self.current_site.remote_root)
 
     # ------------------------------------------------------------------
@@ -604,6 +621,9 @@ class MainWindow(QMainWindow):
 
     def _on_list_failed(self, path: str, msg: str):
         self._log(f"List failed ({path}): {msg}")
+        self.conn_label.setText("Disconnected")
+        self.conn_label.setStyleSheet("color: #b42318; font-weight: 600;")
+        self.btn_connect_site.setEnabled(True)
         self.statusBar().showMessage(f"List failed: {path}", 4000)
         QMessageBox.critical(self, "Error", msg)
 
@@ -737,9 +757,16 @@ class MainWindow(QMainWindow):
                 fname = os.path.basename(local_path)
                 remote_path = join_remote_path(remote_dir, fname)
                 size = os.path.getsize(local_path)
-                task = TaskScheduler.create_upload_task(local_path, remote_path, size)
+                engine = self._resolve_transfer_engine(size)
+                task = TaskScheduler.create_upload_task(
+                    local_path,
+                    remote_path,
+                    size,
+                    engine=engine,
+                    auto_engine=False,
+                )
                 self.scheduler.add_task(task)
-                self._log(f"Queued upload: {fname} -> {remote_path}")
+                self._log(f"Queued upload [{engine}]: {fname} -> {remote_path}")
             elif os.path.isdir(local_path):
                 self._enqueue_dir_upload(local_path, remote_dir)
 
@@ -762,9 +789,16 @@ class MainWindow(QMainWindow):
                 fname = os.path.basename(local_path)
                 remote_path = join_remote_path(remote_dir, fname)
                 size = os.path.getsize(local_path)
-                task = TaskScheduler.create_upload_task(local_path, remote_path, size)
+                engine = self._resolve_transfer_engine(size)
+                task = TaskScheduler.create_upload_task(
+                    local_path,
+                    remote_path,
+                    size,
+                    engine=engine,
+                    auto_engine=False,
+                )
                 self.scheduler.add_task(task)
-                self._log(f"Queued upload (drag): {fname} -> {remote_path}")
+                self._log(f"Queued upload (drag) [{engine}]: {fname} -> {remote_path}")
             elif os.path.isdir(local_path):
                 self._log(f"Queued upload folder (drag): {local_path}")
                 self._enqueue_dir_upload(local_path, remote_dir)
@@ -821,9 +855,16 @@ class MainWindow(QMainWindow):
             self._enqueue_dir_download(entry.path, local_dir)
         else:
             local_path = os.path.join(local_dir, entry.name)
-            task = TaskScheduler.create_download_task(entry.path, local_path, entry.size)
+            engine = self._resolve_transfer_engine(entry.size)
+            task = TaskScheduler.create_download_task(
+                entry.path,
+                local_path,
+                entry.size,
+                engine=engine,
+                auto_engine=False,
+            )
             self.scheduler.add_task(task)
-            self._log(f"Queued download: {entry.name} -> {local_path}")
+            self._log(f"Queued download [{engine}]: {entry.name} -> {local_path}")
 
     def _download_paths(self, remote_paths: list):
         """Handle drag-drop download from remote panel."""
@@ -842,16 +883,32 @@ class MainWindow(QMainWindow):
                     self._enqueue_dir_download(entry.path, local_dir)
                 else:
                     local_path = os.path.join(local_dir, entry.name)
-                    task = TaskScheduler.create_download_task(entry.path, local_path, entry.size)
+                    engine = self._resolve_transfer_engine(entry.size)
+                    task = TaskScheduler.create_download_task(
+                        entry.path,
+                        local_path,
+                        entry.size,
+                        engine=engine,
+                        auto_engine=False,
+                    )
                     self.scheduler.add_task(task)
-                    self._log(f"Queued download (drag): {entry.name} -> {local_path}")
+                    self._log(
+                        f"Queued download (drag) [{engine}]: {entry.name} -> {local_path}"
+                    )
             else:
                 # Entry not found in cache, create task with unknown size
                 name = os.path.basename(remote_path)
                 local_path = os.path.join(local_dir, name)
-                task = TaskScheduler.create_download_task(remote_path, local_path, 0)
+                engine = self._resolve_transfer_engine(0)
+                task = TaskScheduler.create_download_task(
+                    remote_path,
+                    local_path,
+                    0,
+                    engine=engine,
+                    auto_engine=False,
+                )
                 self.scheduler.add_task(task)
-                self._log(f"Queued download (drag): {name} -> {local_path}")
+                self._log(f"Queued download (drag) [{engine}]: {name} -> {local_path}")
 
     def _enqueue_dir_download(self, remote_dir: str, local_parent: str):
         """Create a single folder download task for the remote directory."""
@@ -943,6 +1000,23 @@ class MainWindow(QMainWindow):
         self.log_text.append(msg)
         self.logger.info(msg)
 
+    def _resolve_transfer_engine(self, file_size: int) -> str:
+        """Resolve transfer engine from task override + site default + parallel policy."""
+        if not self.current_site:
+            return "sftp"
+        override = self.transfer_override_combo.currentData()
+        base_protocol = override if override in ("sftp", "scp") else self.current_site.default_transfer_protocol
+        if base_protocol not in ("sftp", "scp"):
+            base_protocol = "sftp"
+
+        if (
+            base_protocol != "scp"
+            and self.scheduler
+            and file_size >= self.scheduler.parallel_threshold
+        ):
+            return "parallel"
+        return base_protocol
+
     def _start_thread(self, thread: QThread):
         """Keep a reference and auto-cleanup."""
         self._bg_threads.append(thread)
@@ -964,8 +1038,12 @@ class MainWindow(QMainWindow):
             self.sites = saved
             for site in saved:
                 self.site_list.addItem(site.name)
+            self.site_list.setCurrentRow(0)
+            self.current_site = saved[0]
+            self._update_site_action_buttons()
             self._log(f"Loaded {len(saved)} saved sites")
         else:
+            self._update_site_action_buttons()
             self._log("No saved sites found. Click 'Add Site' to create your first connection.")
             self.statusBar().showMessage("No saved sites. Add a site to get started.", 5000)
 
@@ -973,3 +1051,10 @@ class MainWindow(QMainWindow):
         """Save sites to persistent storage."""
         self.site_store.save(self.sites)
         self._log(f"Saved {len(self.sites)} sites")
+
+    def _update_site_action_buttons(self):
+        """Enable/disable site actions based on whether a site is selected."""
+        has_site = self.current_site is not None
+        self.btn_edit_site.setEnabled(has_site)
+        self.btn_check_connection.setEnabled(has_site)
+        self.btn_connect_site.setEnabled(has_site)

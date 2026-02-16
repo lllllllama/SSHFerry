@@ -184,3 +184,16 @@ tests/        # Pytest 测试集
 - 密码为运行时信息，不会通过 `SiteStore` 持久化。
 - 当前项目定位为个人与学习用途。
 - 为了更安全，建议使用最小权限账号，并尽量避免将 `remote_root` 设为根目录。
+
+## 2026 Update (Protocol and Scheduler)
+
+- Added `scp` transfer engine for file upload/download tasks.
+- Site config supports `default_transfer_protocol` (`sftp` or `scp`).
+- Main window supports per-task protocol override (`Auto`, `SFTP`, `SCP`).
+- SCP is overwrite-by-default.
+- If SCP transfer fails, scheduler auto-fallbacks once to SFTP (`fallback=scp_to_sftp`).
+- Protocol-aware scheduler limits:
+  - total: 3
+  - sftp: 3
+  - scp: 2
+  - parallel: 1

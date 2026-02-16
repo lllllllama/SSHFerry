@@ -22,6 +22,7 @@ It focuses on three goals: **safe remote operations**, **practical transfer beha
 - Engines:
   - `sftp` (default)
   - `parallel` (native chunked transfer for large files)
+  - `scp` (manual-select transfer mode; overwrite-by-default)
 - Task states:
   - `pending`, `running`, `paused`, `done`, `failed`, `canceled`, `skipped`
 
@@ -32,6 +33,8 @@ It focuses on three goals: **safe remote operations**, **practical transfer beha
 3. Run connection check.
 4. Connect and browse remote tree.
 5. Upload/download files or folders.
+   - Site-level default transfer protocol can be set to `sftp` or `scp`.
+   - Per-task override is available from the main window (`Auto/SFTP/SCP`).
 6. Monitor and control tasks in Task Center.
 
 ### First-run note
@@ -125,6 +128,18 @@ python -c "from src.shared.errors import ErrorCode; from src.shared.models impor
 - Large files are automatically switched to optimized parallel SFTP chunk transfer.
 - Parallel transfer uses throughput presets (`low` / `medium` / `high`).
 - Default preset policy is direction-aware: upload uses `medium`, download uses `high`.
+- Scheduler has protocol-aware concurrency caps by default:
+  - `max_workers_total=3`
+  - `max_workers_sftp=3`
+  - `max_workers_scp=2`
+  - `max_workers_parallel=1`
+
+### SCP behavior notes
+
+- SCP is now supported for file upload/download tasks.
+- SCP default semantics are overwrite-oriented (no native resume).
+- If an SCP transfer fails, SSHFerry automatically falls back once to SFTP (`fallback=scp_to_sftp`).
+- On fallback, existing SFTP resume/skip behavior applies.
 
 ### Why fallback is faster now
 

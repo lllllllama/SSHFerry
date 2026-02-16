@@ -88,6 +88,10 @@ class SiteEditorDialog(QDialog):
         self.remote_root_edit.setPlaceholderText("/")
         basic_layout.addRow("Remote Root (Sandbox):", self.remote_root_edit)
 
+        self.default_protocol_combo = QComboBox()
+        self.default_protocol_combo.addItems(["sftp", "scp"])
+        basic_layout.addRow("Default Transfer Protocol:", self.default_protocol_combo)
+
         basic_group.setLayout(basic_layout)
         layout.addWidget(basic_group)
 
@@ -185,6 +189,7 @@ class SiteEditorDialog(QDialog):
         self.port_spin.setValue(config.port)
         self.username_edit.setText(config.username)
         self.remote_root_edit.setText(config.remote_root)
+        self.default_protocol_combo.setCurrentText(config.default_transfer_protocol)
 
         self.auth_method_combo.setCurrentText(config.auth_method)
 
@@ -225,6 +230,7 @@ class SiteEditorDialog(QDialog):
             username=self.username_edit.text().strip(),
             auth_method=auth_method,
             remote_root=remote_root,
+            default_transfer_protocol=self.default_protocol_combo.currentText(),
         )
 
         # Add credentials (runtime only)

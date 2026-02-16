@@ -26,6 +26,7 @@ class SiteConfig:
     proxy_jump: Optional[str] = None
     ssh_config_path: Optional[str] = None
     ssh_options: List[str] = field(default_factory=list)
+    default_transfer_protocol: str = "sftp"  # "sftp" or "scp"
 
     def __post_init__(self):
         """Validate configuration."""
@@ -33,6 +34,10 @@ class SiteConfig:
             raise ValueError(f"Invalid auth_method: {self.auth_method}")
         if self.port <= 0 or self.port > 65535:
             raise ValueError(f"Invalid port: {self.port}")
+        if self.default_transfer_protocol not in ("sftp", "scp"):
+            raise ValueError(
+                f"Invalid default_transfer_protocol: {self.default_transfer_protocol}"
+            )
 
 
 @dataclass
@@ -62,7 +67,7 @@ class Task:
 
     task_id: str
     kind: str  # "upload", "download", "delete", "mkdir", "rename"
-    engine: str  # "sftp" or "parallel"
+    engine: str  # "sftp", "parallel", or "scp"
     src: str
     dst: str
     bytes_total: int

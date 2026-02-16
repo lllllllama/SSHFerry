@@ -1,10 +1,10 @@
 """Task scheduler for managing file transfer tasks."""
+from collections import defaultdict
 import logging
 import os
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
-from queue import Queue
 from threading import Lock, Thread
 from typing import Dict, List, Optional
 
@@ -12,6 +12,7 @@ from src.engines.parallel_sftp_engine import (
     DEFAULT_PARALLEL_THRESHOLD_BYTES,
     ParallelSftpEngine,
 )
+from src.engines.scp_engine import ScpEngine
 from src.engines.sftp_engine import SftpEngine
 from src.services.metrics import MetricsCollector, TransferRecord
 from src.shared.errors import ErrorCode, SSHFerryError
@@ -34,6 +35,9 @@ class TaskScheduler:
         self,
         site_config: SiteConfig,
         max_workers: int = 3,
+        max_workers_sftp: int = 3,
+        max_workers_scp: int = 2,
+        max_workers_parallel: int = 1,
         parallel_preset: str = "high",
         parallel_upload_preset: str = "medium",
         parallel_download_preset: str = "high",
@@ -46,6 +50,9 @@ class TaskScheduler:
         Args:
             site_config: Site configuration for SFTP connection
             max_workers: Maximum number of concurrent tasks
+            max_workers_sftp: Maximum concurrent tasks using sftp engine
+            max_workers_scp: Maximum concurrent tasks using scp engine
+            max_workers_parallel: Maximum concurrent tasks using parallel engine
             parallel_preset: Legacy fallback parallel preset (low/medium/high)
             parallel_upload_preset: Parallel preset for upload tasks
             parallel_download_preset: Parallel preset for download tasks
@@ -54,6 +61,9 @@ class TaskScheduler:
         """
         self.site_config = site_config
         self.max_workers = max_workers
+        self.max_workers_sftp = max_workers_sftp
+        self.max_workers_scp = max_workers_scp
+        self.max_workers_parallel = max_workers_parallel
         self.parallel_preset = parallel_preset
         self.parallel_upload_preset = parallel_upload_preset or parallel_preset
         self.parallel_download_preset = parallel_download_preset or parallel_preset
@@ -64,9 +74,20 @@ class TaskScheduler:
         self.tasks: Dict[str, Task] = {}
         self.task_lock = Lock()
 
-        # Task queue (priority queue)
-        self.task_queue: Queue[str] = Queue()
+        # Pending queue (in insertion order). The scheduler picks runnable tasks
+        # with per-protocol fairness/limits, then submits to executor.
+        self.task_queue: List[str] = []
         self.queued_task_ids: set[str] = set()
+        self.active_task_ids: set[str] = set()
+        self.active_by_protocol: dict[str, int] = defaultdict(int)
+        self.protocol_limits = {
+            "sftp": max_workers_sftp,
+            "scp": max_workers_scp,
+            "parallel": max_workers_parallel,
+        }
+        self._rr_protocols = ["sftp", "scp", "parallel"]
+        self._rr_index = 0
+        self._last_scheduler_stats_log = 0.0
 
         # Thread pool for executing tasks
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -110,7 +131,7 @@ class TaskScheduler:
         with self.task_lock:
             self.tasks[task.task_id] = task
             if task.task_id not in self.queued_task_ids:
-                self.task_queue.put(task.task_id)
+                self.task_queue.append(task.task_id)
                 self.queued_task_ids.add(task.task_id)
 
         self.logger.info(f"Added task {task.task_id}: {task.kind} {task.src} -> {task.dst}")
@@ -199,7 +220,7 @@ class TaskScheduler:
                 task.paused = False
                 # Re-queue the task
                 if task_id not in self.queued_task_ids:
-                    self.task_queue.put(task_id)
+                    self.task_queue.append(task_id)
                     self.queued_task_ids.add(task_id)
                 self.logger.info(f"Resumed task {task_id[:8]}")
                 return True
@@ -234,7 +255,7 @@ class TaskScheduler:
                 
                 # Re-queue the task
                 if task_id not in self.queued_task_ids:
-                    self.task_queue.put(task_id)
+                    self.task_queue.append(task_id)
                     self.queued_task_ids.add(task_id)
                 self.logger.info(f"Restarting task {task_id[:8]}")
                 return True
@@ -245,24 +266,98 @@ class TaskScheduler:
         """Main scheduler loop that processes tasks from queue."""
         while self.running:
             try:
-                # Get next task from queue (with timeout to allow checking self.running)
-                if not self.task_queue.empty():
-                    task_id = self.task_queue.get(timeout=0.5)
+                selected = None
+                with self.task_lock:
+                    selected = self._select_next_runnable_task_locked()
 
-                    with self.task_lock:
-                        self.queued_task_ids.discard(task_id)
-                        task = self.tasks.get(task_id)
-
-                    if task and task.status == "pending":
-                        # Submit task to executor
-                        future = self.executor.submit(self._execute_task, task)
-                        self.futures[task_id] = future
-                else:
+                if not selected:
+                    self._maybe_log_scheduler_stats()
                     time.sleep(0.1)
+                    continue
+
+                task_id, task, protocol = selected
+                future = self.executor.submit(self._execute_task, task)
+                with self.task_lock:
+                    self.futures[task_id] = future
+                    self.active_task_ids.add(task_id)
+                    self.active_by_protocol[protocol] += 1
+                future.add_done_callback(
+                    lambda _fut, tid=task_id, proto=protocol: self._on_future_done(tid, proto)
+                )
+                self._maybe_log_scheduler_stats()
 
             except Exception as e:
                 self.logger.error(f"Scheduler loop error: {e}")
                 time.sleep(1)
+
+    def _on_future_done(self, task_id: str, protocol: str):
+        with self.task_lock:
+            self.active_task_ids.discard(task_id)
+            self.active_by_protocol[protocol] = max(0, self.active_by_protocol[protocol] - 1)
+
+    def _select_next_runnable_task_locked(self) -> Optional[tuple[str, Task, str]]:
+        """Pick a runnable pending task with protocol fairness and limits."""
+        if not self.task_queue:
+            return None
+        if len(self.active_task_ids) >= self.max_workers:
+            return None
+
+        now = time.time()
+        protocol_order = []
+        for i in range(len(self._rr_protocols)):
+            protocol_order.append(self._rr_protocols[(self._rr_index + i) % len(self._rr_protocols)])
+
+        for protocol in protocol_order:
+            limit = self.protocol_limits.get(protocol, self.max_workers)
+            if self.active_by_protocol.get(protocol, 0) >= limit:
+                continue
+            for idx, task_id in enumerate(self.task_queue):
+                task = self.tasks.get(task_id)
+                if not task:
+                    continue
+                if task.status != "pending":
+                    continue
+                task_protocol = self._task_protocol(task)
+                if task_protocol != protocol:
+                    continue
+                # runnable
+                self.task_queue.pop(idx)
+                self.queued_task_ids.discard(task_id)
+                self._rr_index = (self._rr_protocols.index(protocol) + 1) % len(self._rr_protocols)
+                return task_id, task, protocol
+
+        # Cleanup canceled/non-pending tasks from the front over time.
+        self.task_queue = [
+            tid for tid in self.task_queue
+            if (self.tasks.get(tid) and self.tasks[tid].status == "pending")
+        ]
+        self.queued_task_ids = set(self.task_queue)
+        return None
+
+    def _task_protocol(self, task: Task) -> str:
+        if task.engine in ("sftp", "scp", "parallel"):
+            return task.engine
+        return "sftp"
+
+    def _maybe_log_scheduler_stats(self) -> None:
+        now = time.time()
+        if now - self._last_scheduler_stats_log < 2.0:
+            return
+        self._last_scheduler_stats_log = now
+        with self.task_lock:
+            queued = len(self.task_queue)
+            active_total = len(self.active_task_ids)
+            active_sftp = self.active_by_protocol.get("sftp", 0)
+            active_scp = self.active_by_protocol.get("scp", 0)
+            active_parallel = self.active_by_protocol.get("parallel", 0)
+        self.logger.debug(
+            "scheduler_stats queue=%s active_total=%s active_sftp=%s active_scp=%s active_parallel=%s",
+            queued,
+            active_total,
+            active_sftp,
+            active_scp,
+            active_parallel,
+        )
 
     def _execute_task(self, task: Task):
         """
@@ -293,11 +388,15 @@ class TaskScheduler:
             if task.kind == "upload":
                 if task.engine == "parallel":
                     self._execute_parallel_upload(task)
+                elif task.engine == "scp":
+                    self._execute_scp_upload(task)
                 else:
                     self._execute_upload(task)
             elif task.kind == "download":
                 if task.engine == "parallel":
                     self._execute_parallel_download(task)
+                elif task.engine == "scp":
+                    self._execute_scp_download(task)
                 else:
                     self._execute_download(task)
             elif task.kind == "folder_upload":
@@ -604,6 +703,102 @@ class TaskScheduler:
             check_interrupt=check_interrupt,
         )
 
+    def _execute_scp_upload(self, task: Task):
+        """Execute upload task using SCP and fallback to SFTP once on transfer failure."""
+        def progress_callback(bytes_transferred, bytes_total):
+            with self.task_lock:
+                task.bytes_done = bytes_transferred
+                task.bytes_total = bytes_total
+                if task.start_time:
+                    elapsed = time.time() - task.start_time
+                    if elapsed > 0:
+                        task.speed = bytes_transferred / elapsed
+
+        def check_interrupt():
+            if task.paused:
+                with self.task_lock:
+                    task.status = "paused"
+                raise InterruptedError("Task paused")
+            return task.interrupted
+
+        engine = ScpEngine(self.site_config, self.logger)
+        try:
+            engine.connect()
+            engine.upload_file(task.src, task.dst, callback=progress_callback, check_interrupt=check_interrupt)
+        except InterruptedError:
+            with self.task_lock:
+                if task.paused:
+                    task.status = "paused"
+                    self.logger.info(f"Paused: {os.path.basename(task.src)}")
+                else:
+                    task.status = "canceled"
+                    self.logger.info(f"Canceled: {os.path.basename(task.src)}")
+        except SSHFerryError as e:
+            if task.paused or task.interrupted:
+                raise
+            self.logger.warning(
+                "fallback=scp_to_sftp task=%s reason=%s",
+                task.task_id[:8],
+                e.message,
+            )
+            try:
+                self._execute_upload(task)
+            except Exception as fallback_error:
+                raise SSHFerryError(
+                    ErrorCode.TRANSFER_FAILED,
+                    f"SCP failed: {e.message}; fallback SFTP failed: {fallback_error}",
+                )
+        finally:
+            engine.disconnect()
+
+    def _execute_scp_download(self, task: Task):
+        """Execute download task using SCP and fallback to SFTP once on transfer failure."""
+        def progress_callback(bytes_transferred, bytes_total):
+            with self.task_lock:
+                task.bytes_done = bytes_transferred
+                task.bytes_total = bytes_total
+                if task.start_time:
+                    elapsed = time.time() - task.start_time
+                    if elapsed > 0:
+                        task.speed = bytes_transferred / elapsed
+
+        def check_interrupt():
+            if task.paused:
+                with self.task_lock:
+                    task.status = "paused"
+                raise InterruptedError("Task paused")
+            return task.interrupted
+
+        engine = ScpEngine(self.site_config, self.logger)
+        try:
+            engine.connect()
+            engine.download_file(task.src, task.dst, callback=progress_callback, check_interrupt=check_interrupt)
+        except InterruptedError:
+            with self.task_lock:
+                if task.paused:
+                    task.status = "paused"
+                    self.logger.info(f"Paused: {os.path.basename(task.src)}")
+                else:
+                    task.status = "canceled"
+                    self.logger.info(f"Canceled: {os.path.basename(task.src)}")
+        except SSHFerryError as e:
+            if task.paused or task.interrupted:
+                raise
+            self.logger.warning(
+                "fallback=scp_to_sftp task=%s reason=%s",
+                task.task_id[:8],
+                e.message,
+            )
+            try:
+                self._execute_download(task)
+            except Exception as fallback_error:
+                raise SSHFerryError(
+                    ErrorCode.TRANSFER_FAILED,
+                    f"SCP failed: {e.message}; fallback SFTP failed: {fallback_error}",
+                )
+        finally:
+            engine.disconnect()
+
     def _metric_preset_for_task(self, task: Task) -> str:
         """Resolve metric preset label from task engine/kind."""
         if task.engine != "parallel":
@@ -802,10 +997,16 @@ class TaskScheduler:
 
                 with self.task_lock:
                     task.current_file = entry.name
+                    base_bytes = task.bytes_done
                 
                 # Download with progress callback
                 def progress_callback(bytes_transferred, bytes_total):
                     with self.task_lock:
+                        # Real-time aggregate progress for folder download
+                        task.bytes_done = min(
+                            task.bytes_total,
+                            base_bytes + bytes_transferred,
+                        )
                         task.speed = bytes_transferred / max(1, time.time() - task.start_time) if task.start_time else 0
                 
                 if offset > 0:
@@ -815,7 +1016,7 @@ class TaskScheduler:
                 
                 with self.task_lock:
                     task.subtask_done += 1
-                    task.bytes_done += entry.size
+                    task.bytes_done = min(task.bytes_total, base_bytes + entry.size)
                     
                 self.logger.info(f"[{task.subtask_done}/{task.subtask_count}] Downloaded: {entry.name}")
 
@@ -842,7 +1043,7 @@ class TaskScheduler:
         Returns:
             Task object
         """
-        if auto_engine and file_size >= threshold:
+        if auto_engine and engine != "scp" and file_size >= threshold:
             engine = "parallel"
         return Task(
             task_id=str(uuid.uuid4()),
@@ -877,7 +1078,7 @@ class TaskScheduler:
         Returns:
             Task object
         """
-        if auto_engine and file_size >= threshold:
+        if auto_engine and engine != "scp" and file_size >= threshold:
             engine = "parallel"
         return Task(
             task_id=str(uuid.uuid4()),
@@ -888,6 +1089,11 @@ class TaskScheduler:
             bytes_total=file_size,
             status="pending"
         )
+
+    def pending_task_count(self) -> int:
+        """Expose pending queue size for tests/debug panels."""
+        with self.task_lock:
+            return len(self.task_queue)
 
     @staticmethod
     def create_mkdir_task(remote_path: str, engine: str = "sftp") -> Task:
