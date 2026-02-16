@@ -2,6 +2,7 @@
 import builtins
 import logging
 import os
+import shlex
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -55,7 +56,17 @@ class SftpEngine:
         """
         try:
             self.ssh_client = paramiko.SSHClient()
-            self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            strict_hostkey = os.getenv("SSHFERRY_STRICT_HOSTKEY", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+            if strict_hostkey:
+                self.ssh_client.load_system_host_keys()
+                self.ssh_client.set_missing_host_key_policy(paramiko.RejectPolicy())
+            else:
+                self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
             # Prepare connection kwargs
             connect_kwargs = {
@@ -223,7 +234,8 @@ class SftpEngine:
 
         try:
             # Use SSH command for recursive delete
-            cmd = f"rm -rf '{normalized_path}'"
+            # Shell-escape path to avoid command injection via crafted remote names.
+            cmd = f"rm -rf -- {shlex.quote(normalized_path)}"
             stdin, stdout, stderr = self.ssh_client.exec_command(cmd)
             exit_status = stdout.channel.recv_exit_status()
             
@@ -447,7 +459,7 @@ class SftpEngine:
         try:
             self.stat(remote_path)
             return True
-        except:
+        except Exception:
             return False
 
     def check_path_writable(self, remote_path: str) -> bool:
@@ -471,7 +483,7 @@ class SftpEngine:
             self.sftp_client.open(test_file, 'w').close()
             self.sftp_client.remove(test_file)
             return True
-        except:
+        except Exception:
             return False
 
     def __enter__(self):

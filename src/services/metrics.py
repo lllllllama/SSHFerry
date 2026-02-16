@@ -7,9 +7,11 @@ This module implements session-level adaptive strategy per agent.md Milestone 5:
 """
 import json
 import logging
+import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+import tempfile
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -65,6 +67,23 @@ def _default_metrics_path() -> Path:
         base = Path.home() / ".config" / "sshferry"
     base.mkdir(parents=True, exist_ok=True)
     return base / "metrics.json"
+
+
+def _atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> None:
+    """Atomically write text content to a file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding=encoding, newline="\n") as f:
+            f.write(content)
+        os.replace(tmp_name, path)
+    finally:
+        if os.path.exists(tmp_name):
+            os.unlink(tmp_name)
 
 
 class MetricsCollector:
@@ -218,10 +237,7 @@ class MetricsCollector:
                 "current_preset": self.current_preset,
                 "last_preset_change": self.last_preset_change,
             }
-            self.store_path.parent.mkdir(parents=True, exist_ok=True)
-            self.store_path.write_text(
-                json.dumps(data, indent=2, ensure_ascii=False),
-                encoding="utf-8"
-            )
+            payload = json.dumps(data, indent=2, ensure_ascii=False)
+            _atomic_write_text(self.store_path, payload, encoding="utf-8")
         except Exception as e:
             logger.error(f"Failed to save metrics: {e}")

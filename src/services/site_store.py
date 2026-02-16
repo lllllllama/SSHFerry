@@ -1,7 +1,9 @@
 """Site configuration storage."""
 import json
 import logging
+import os
 from pathlib import Path
+import tempfile
 from typing import List, Optional
 
 from src.shared.models import SiteConfig
@@ -25,6 +27,23 @@ def _default_store_path() -> Path:
         base = Path.home() / ".config" / "sshferry"
     base.mkdir(parents=True, exist_ok=True)
     return base / "sites.json"
+
+
+def _atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> None:
+    """Atomically write text content to a file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding=encoding, newline="\n") as f:
+            f.write(content)
+        os.replace(tmp_name, path)
+    finally:
+        if os.path.exists(tmp_name):
+            os.unlink(tmp_name)
 
 
 class SiteStore:
@@ -64,6 +83,6 @@ class SiteStore:
         for site in sites:
             item = {f: getattr(site, f) for f in _PERSIST_FIELDS}
             data.append(item)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        payload = json.dumps(data, indent=2, ensure_ascii=False)
+        _atomic_write_text(self.path, payload, encoding="utf-8")
         logger.info(f"Saved {len(sites)} sites to {self.path}")

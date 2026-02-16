@@ -37,7 +37,17 @@ class ScpEngine:
         """Establish SSH and SCP connections."""
         try:
             self.ssh_client = paramiko.SSHClient()
-            self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            strict_hostkey = os.getenv("SSHFERRY_STRICT_HOSTKEY", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+            if strict_hostkey:
+                self.ssh_client.load_system_host_keys()
+                self.ssh_client.set_missing_host_key_policy(paramiko.RejectPolicy())
+            else:
+                self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             connect_kwargs = {
                 "hostname": self.site_config.host,
                 "port": self.site_config.port,

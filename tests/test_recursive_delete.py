@@ -30,7 +30,7 @@ class TestRecursiveDelete(unittest.TestCase):
         self.engine.remove_dir_recursive("/sandbox/folder")
         
         # Verify rm -rf was called
-        self.engine.ssh_client.exec_command.assert_called_with("rm -rf '/sandbox/folder'")
+        self.engine.ssh_client.exec_command.assert_called_with("rm -rf -- /sandbox/folder")
 
     def test_recursive_delete_safety(self):
         # Should raise error for root

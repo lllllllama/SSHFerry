@@ -1,5 +1,6 @@
 """Task scheduler for managing file transfer tasks."""
 from collections import defaultdict
+from dataclasses import replace
 import logging
 import os
 import time
@@ -113,9 +114,16 @@ class TaskScheduler:
     def stop(self):
         """Stop the scheduler and wait for completion."""
         self.running = False
+        with self.task_lock:
+            # Ask running workers to stop cooperatively.
+            for task_id in self.active_task_ids:
+                task = self.tasks.get(task_id)
+                if task and task.status in ("running", "paused", "pending"):
+                    task.interrupted = True
+                    task.paused = False
         if self.scheduler_thread:
             self.scheduler_thread.join(timeout=5)
-        self.executor.shutdown(wait=True)
+        self.executor.shutdown(wait=True, cancel_futures=True)
         self.logger.info("Task scheduler stopped")
 
     def add_task(self, task: Task) -> str:
@@ -145,7 +153,8 @@ class TaskScheduler:
     def get_all_tasks(self) -> List[Task]:
         """Get all tasks."""
         with self.task_lock:
-            return list(self.tasks.values())
+            # Return snapshots to avoid sharing mutable task objects across threads.
+            return [replace(task) for task in self.tasks.values()]
 
     def cancel_task(self, task_id: str) -> bool:
         """
@@ -523,8 +532,9 @@ class TaskScheduler:
                 else:
                      # File exists and is larger - overwrite (offset 0)
                      self.logger.info(f"Overwriting larger file: {os.path.basename(task.src)}")
-            except:
-                pass  # File doesn't exist, proceed normally
+            except SSHFerryError as e:
+                if e.code != ErrorCode.PATH_NOT_FOUND:
+                    raise
 
             def progress_callback(bytes_transferred, bytes_total):
                 with self.task_lock:
@@ -566,8 +576,10 @@ class TaskScheduler:
                 engine.stat(new_path)
                 counter += 1
                 new_path = f"{base}_{counter}{ext}"
-            except:
-                return new_path
+            except SSHFerryError as e:
+                if e.code == ErrorCode.PATH_NOT_FOUND:
+                    return new_path
+                raise
 
     def _execute_download(self, task: Task):
         """Execute download task with smart file detection."""
@@ -579,7 +591,7 @@ class TaskScheduler:
             try:
                 remote_stat = engine.stat(task.src)
                 remote_size = remote_stat.size
-            except:
+            except SSHFerryError:
                 remote_size = task.bytes_total
             
             # Check if local file already exists
@@ -818,7 +830,7 @@ class TaskScheduler:
             # Try to remove as file first, then as directory
             try:
                 engine.remove_file(task.src)
-            except:
+            except SSHFerryError:
                 engine.remove_dir(task.src)
         finally:
             engine.disconnect()
@@ -867,8 +879,11 @@ class TaskScheduler:
         # Create remote directory
         try:
             engine.mkdir(remote_dir)
-        except:
-            pass  # Directory may already exist
+        except SSHFerryError:
+            # Continue only when directory already exists.
+            existing = engine.stat(remote_dir)
+            if not existing.is_dir:
+                raise
         
         # Helper to check for interrupts
         def check_interrupt():
@@ -897,24 +912,29 @@ class TaskScheduler:
                         skip_file = True
                     elif stats.size < file_size:
                         offset = stats.size
-                except:
-                    pass
+                except SSHFerryError as e:
+                    if e.code != ErrorCode.PATH_NOT_FOUND:
+                        raise
 
                 if skip_file:
                     with self.task_lock:
                         task.subtask_done += 1
-                        task.bytes_done += file_size
+                        task.bytes_done = min(task.bytes_total, task.bytes_done + file_size)
                     self.logger.info(f"[{task.subtask_done}/{task.subtask_count}] Skipped (exists): {name}")
                     continue
 
                 with self.task_lock:
                     task.current_file = name
+                    base_bytes = task.bytes_done
                 
                 # Upload with progress callback
                 def progress_callback(bytes_transferred, bytes_total):
                     with self.task_lock:
-                        # Calculate overall progress
-                        base_bytes = task.bytes_done
+                        # Real-time aggregate progress for folder upload
+                        task.bytes_done = min(
+                            task.bytes_total,
+                            base_bytes + bytes_transferred,
+                        )
                         task.speed = bytes_transferred / max(1, time.time() - task.start_time) if task.start_time else 0
                 
                 if offset > 0:
@@ -924,7 +944,7 @@ class TaskScheduler:
                 
                 with self.task_lock:
                     task.subtask_done += 1
-                    task.bytes_done += file_size
+                    task.bytes_done = min(task.bytes_total, base_bytes + file_size)
                     # Log file completion
                 self.logger.info(f"[{task.subtask_done}/{task.subtask_count}] Uploaded: {name}")
                 

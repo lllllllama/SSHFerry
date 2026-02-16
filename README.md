@@ -179,6 +179,7 @@ python tools/benchmark_transfer.py --site "<your-site-name>" --size-mb 512 --ite
 - `SSHFERRY_PARALLEL_WARMUP_BATCH`: workers launched per warmup batch.
 - `SSHFERRY_PARALLEL_WARMUP_DELAY`: seconds between warmup batches.
 - `SSHFERRY_PARALLEL_MAX_CHUNK_RETRIES`: per-chunk retry limit.
+- `SSHFERRY_STRICT_HOSTKEY`: set to `1`/`true`/`yes`/`on` to enable strict SSH host-key verification (`RejectPolicy` + system known_hosts).
 
 ## 🗂️ Project Layout
 

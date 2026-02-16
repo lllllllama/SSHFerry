@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from src.core.scheduler import TaskScheduler
+from src.shared.errors import ErrorCode, SSHFerryError
 from src.shared.models import RemoteEntry, SiteConfig, Task
 
 
@@ -142,3 +143,65 @@ def test_folder_download_updates_progress_during_file_transfer(tmp_path):
     assert task.bytes_done == 1000
     assert progress_snapshots == [400]
     assert os.path.isdir(str(tmp_path / "dl"))
+
+
+def test_get_all_tasks_returns_snapshots():
+    scheduler = create_mock_scheduler()
+    task = Task(
+        task_id="snap1",
+        kind="download",
+        engine="sftp",
+        src="/remote.bin",
+        dst="local.bin",
+        bytes_total=100,
+        status="pending",
+    )
+    scheduler.add_task(task)
+
+    snapshot = scheduler.get_all_tasks()[0]
+    snapshot.status = "failed"
+    snapshot.bytes_done = 77
+
+    original = scheduler.get_task("snap1")
+    assert original is not None
+    assert original.status == "pending"
+    assert original.bytes_done == 0
+
+
+def test_folder_upload_updates_progress_during_file_transfer(tmp_path):
+    scheduler = create_mock_scheduler()
+    local_dir = tmp_path / "up"
+    local_dir.mkdir()
+    local_file = local_dir / "a.bin"
+    local_file.write_bytes(b"x" * 1000)
+
+    task = Task(
+        task_id="fu1",
+        kind="folder_upload",
+        engine="sftp",
+        src=str(local_dir),
+        dst="/remote",
+        bytes_total=1000,
+        subtask_count=1,
+    )
+    task.start_time = time.time()
+    progress_snapshots: list[int] = []
+
+    class FakeEngine:
+        def mkdir(self, _path):
+            return None
+
+        def stat(self, _path):
+            raise SSHFerryError(ErrorCode.PATH_NOT_FOUND, "not found")
+
+        def upload_file(self, _src, _dst, callback=None, check_interrupt=None, offset=0):
+            if callback:
+                callback(400, 1000)
+                progress_snapshots.append(task.bytes_done)
+                callback(1000, 1000)
+
+    scheduler._upload_dir_recursive(FakeEngine(), task, str(local_dir), "/remote")
+
+    assert task.subtask_done == 1
+    assert task.bytes_done == 1000
+    assert progress_snapshots == [400]
