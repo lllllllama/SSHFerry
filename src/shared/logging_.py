@@ -1,5 +1,6 @@
 """Structured logging for SSHFerry."""
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -14,27 +15,35 @@ class SanitizingFormatter(logging.Formatter):
     Prevents passwords, passphrases, and key contents from being logged.
     """
 
-    SENSITIVE_KEYS = [
-        'password',
-        'passphrase',
-        'key',
-        'private_key',
-        'secret',
-        'token',
-    ]
+    SENSITIVE_KEYS = ["password", "passphrase", "private_key", "secret", "token"]
+    _KEY_VALUE_PATTERN = re.compile(
+        r"(?i)\b(password|passphrase|private_key|secret|token)\b\s*[:=]\s*([^\s,;|]+)"
+    )
+    _SPACE_VALUE_PATTERN = re.compile(
+        r"(?i)\b(password|passphrase|secret|token)\b\s+([^\s,;|]+)"
+    )
+    _URI_CRED_PATTERN = re.compile(r"(?i)\b([a-z][a-z0-9+\-.]*://)([^:@/\s]+):([^@/\s]+)@")
+
+    @classmethod
+    def _sanitize_text(cls, text: str) -> str:
+        """Best-effort redaction for common secret patterns in logs."""
+        redacted = cls._KEY_VALUE_PATTERN.sub(r"\1=***", text)
+        redacted = cls._SPACE_VALUE_PATTERN.sub(r"\1 ***", redacted)
+        redacted = cls._URI_CRED_PATTERN.sub(r"\1\2:***@", redacted)
+        return redacted
 
     def format(self, record: logging.LogRecord) -> str:
         """Format and sanitize log record."""
-        # Sanitize message
-        if hasattr(record, 'msg'):
-            msg_lower = str(record.msg).lower()
-            for key in self.SENSITIVE_KEYS:
-                if key in msg_lower:
-                    # Replace sensitive data patterns
-                    # This is a simple approach; production may need more sophisticated detection
-                    pass
-
-        return super().format(record)
+        original_msg = record.msg
+        original_args = record.args
+        try:
+            message = record.getMessage()
+            record.msg = self._sanitize_text(message)
+            record.args = ()
+            return super().format(record)
+        finally:
+            record.msg = original_msg
+            record.args = original_args
 
 
 def setup_logger(

@@ -3,11 +3,12 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QDir, QMimeData, QModelIndex, QTimer, Qt, QUrl, Signal
+from PySide6.QtCore import QDir, QMimeData, QModelIndex, QSize, Qt, QUrl, Signal, QItemSelectionModel
 from PySide6.QtGui import QColor, QDrag, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QFileIconProvider,
     QFileSystemModel,
     QHBoxLayout,
     QLabel,
@@ -109,12 +110,10 @@ class LocalPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_dir = str(Path.home())
-        self._drag_anim_phase = 0
         self._drag_anim_active = False
-        self._drag_colors = ["#cce4f7", "#a9dcff"]
-        self._drag_timer = QTimer(self)
-        self._drag_timer.timeout.connect(self._on_drag_anim_tick)
         self._base_tree_style = ""
+        self._drag_saved_current_index = QModelIndex()
+        self._drag_saved_selected_rows = []
         self._init_ui()
 
     def _init_ui(self):
@@ -157,7 +156,10 @@ class LocalPanel(QWidget):
         layout.addLayout(nav)
 
         # File system model
+        self.icon_provider = QFileIconProvider()
         self.model = QFileSystemModel()
+        self.model.setIconProvider(self.icon_provider)
+        self.model.setOption(QFileSystemModel.Option.DontUseCustomDirectoryIcons, True)
         self.model.setRootPath(self.current_dir)
         self.model.setFilter(QDir.AllEntries | QDir.NoDotAndDotDot)
 
@@ -167,6 +169,7 @@ class LocalPanel(QWidget):
         self.tree.setRootIndex(self.model.index(self.current_dir))
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tree.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tree.setIconSize(QSize(18, 18))
         self.tree.setUniformRowHeights(True)
         self.tree.setAnimated(True)
         self.tree.setSortingEnabled(True)
@@ -299,38 +302,33 @@ class LocalPanel(QWidget):
         """Highlight hovered target directory during drag."""
         idx = self._target_index_from_pos(panel_pos)
         if idx.isValid():
-            self.tree.setCurrentIndex(idx)
             self._start_drag_animation()
+            self.tree.selectionModel().clearSelection()
+            self.tree.selectionModel().select(
+                idx, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+            )
+            self.tree.setCurrentIndex(idx)
 
     def _start_drag_animation(self):
-        """Start pulsing selected-directory highlight."""
+        """Preserve current selection state when drag highlight starts."""
         if self._drag_anim_active:
             return
         self._drag_anim_active = True
-        self._drag_anim_phase = 0
-        self._apply_drag_selection_color(self._drag_colors[self._drag_anim_phase])
-        self._drag_timer.start(160)
+        self._drag_saved_current_index = self.tree.currentIndex()
+        self._drag_saved_selected_rows = list(self.tree.selectionModel().selectedRows())
 
     def _stop_drag_animation(self):
-        """Stop pulsing highlight and restore style."""
-        self._drag_timer.stop()
+        """Restore previous selection state after drag feedback."""
         self._drag_anim_active = False
-        self.tree.setStyleSheet(self._base_tree_style)
-        self.tree.clearSelection()
-
-    def _on_drag_anim_tick(self):
-        """Pulse selected color while dragging."""
-        if not self._drag_anim_active:
-            return
-        self._drag_anim_phase = (self._drag_anim_phase + 1) % len(self._drag_colors)
-        self._apply_drag_selection_color(self._drag_colors[self._drag_anim_phase])
-
-    def _apply_drag_selection_color(self, color: str):
-        """Apply temporary selected-item color for drag feedback."""
-        override = (
-            "\nQTreeView::item:selected {"
-            f"background-color: {color};"
-            "}\n"
-        )
-        self.tree.setStyleSheet((self._base_tree_style or "") + override)
+        selection_model = self.tree.selectionModel()
+        selection_model.clearSelection()
+        for idx in self._drag_saved_selected_rows:
+            if idx.isValid():
+                selection_model.select(
+                    idx, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+                )
+        if self._drag_saved_current_index.isValid():
+            self.tree.setCurrentIndex(self._drag_saved_current_index)
+        self._drag_saved_current_index = QModelIndex()
+        self._drag_saved_selected_rows = []
 

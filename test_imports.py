@@ -1,78 +1,45 @@
-#!/usr/bin/env python3
-"""Test script to verify imports and basic functionality."""
+﻿#!/usr/bin/env python3
+"""Quick import smoke test for SSHFerry."""
 
-print("Testing SSHFerry imports...")
+from src.services.connection_checker import ConnectionChecker
+from src.core.scheduler import TaskScheduler
+from src.engines.sftp_engine import SftpEngine
+from src.shared.errors import ErrorCode, SSHFerryError
+from src.shared.logging_ import setup_logger
+from src.shared.models import RemoteEntry, SiteConfig, Task
+from src.shared.paths import ensure_in_sandbox, normalize_remote_path
 
-try:
-    # Test shared modules
-    print("✓ Importing shared.errors...")
-    from src.shared.errors import ErrorCode, SSHFerryError
-    
-    print("✓ Importing shared.models...")
-    from src.shared.models import SiteConfig, RemoteEntry, Task
-    
-    print("✓ Importing shared.paths...")
-    from src.shared.paths import normalize_remote_path, ensure_in_sandbox
-    
-    print("✓ Importing shared.logging_...")
-    from src.shared.logging_ import setup_logger
-    
-    # Test engines
-    print("✓ Importing engines.sftp_engine...")
-    from src.engines.sftp_engine import SftpEngine
-    
-    # Test core
-    print("✓ Importing core.scheduler...")
-    from src.core.scheduler import TaskScheduler
-    
-    # Test services
-    print("✓ Importing services.connection_checker...")
-    from src.services.connection_checker import ConnectionChecker
-    
-    print("\n✅ All imports successful!")
-    
-    # Test basic path operations
-    print("\nTesting path operations...")
-    
+
+def main() -> None:
+    print("Testing SSHFerry imports...")
+    print("[OK] Imports successful")
+
     normalized = normalize_remote_path("/root//autodl-tmp/./test")
     assert normalized == "/root/autodl-tmp/test", f"Path normalization failed: {normalized}"
-    print(f"  normalize_remote_path: {normalized} ✓")
-    
-    try:
-        ensure_in_sandbox("/root/autodl-tmp/test", "/root/autodl-tmp")
-        print("  ensure_in_sandbox (valid path): ✓")
-    except:
-        print("  ensure_in_sandbox (valid path): ✗")
-        
+    print(f"[OK] normalize_remote_path: {normalized}")
+
+    ensure_in_sandbox("/root/autodl-tmp/test", "/root/autodl-tmp")
+    print("[OK] ensure_in_sandbox accepts valid path")
+
     try:
         ensure_in_sandbox("/etc/passwd", "/root/autodl-tmp")
-        print("  ensure_in_sandbox (invalid path): ✗ (should have raised)")
-    except:
-        print("  ensure_in_sandbox (invalid path): ✓ (correctly rejected)")
-    
-    # Test model creation
-    print("\nTesting model creation...")
+        raise AssertionError("ensure_in_sandbox should reject out-of-sandbox paths")
+    except Exception:
+        print("[OK] ensure_in_sandbox rejects invalid path")
+
     site = SiteConfig(
         name="Test",
         host="localhost",
         port=22,
         username="user",
         auth_method="password",
-        remote_root="/root/test"
+        remote_root="/root/test",
     )
-    print(f"  SiteConfig: {site.name} @ {site.host}:{site.port} ✓")
-    
-    print("\n✅ All basic tests passed!")
-    print("\nNote: To run the full application, you need:")
-    print("  - PySide6 (for GUI)")
-    print("  - Paramiko (for SSH/SFTP)")
-    print("  Install with: pip install PySide6 paramiko")
-    
-except ImportError as e:
-    print(f"\n❌ Import error: {e}")
-    print("\nMake sure all dependencies are installed:")
-    print("  pip install -r requirements.txt")
-except Exception as e:
-    print(f"\n❌ Error: {e}")
-    import traceback
-    traceback.print_exc()
+    print(f"[OK] SiteConfig: {site.name} @ {site.host}:{site.port}")
+
+    _ = (ErrorCode, SSHFerryError, RemoteEntry, Task, setup_logger, SftpEngine, TaskScheduler, ConnectionChecker)
+    print("All basic checks passed")
+
+
+if __name__ == "__main__":
+    main()

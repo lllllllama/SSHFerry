@@ -76,6 +76,16 @@ python -m pip install ".[build]"
 powershell -ExecutionPolicy Bypass -File .\tools\build_windows.ps1
 ```
 
+Recommended validation flow on Windows:
+
+```powershell
+# 1) Build a console-enabled debug package first
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows.ps1 -Clean -Debug
+
+# 2) After startup/connect checks pass, build the GUI release package
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows.ps1 -Clean
+```
+
 Or use the wrapper:
 
 ```bat
@@ -88,12 +98,24 @@ Output package directory:
 release/SSHFerry-<version>-windows/
 ```
 
+Debug package directory:
+
+```text
+release/SSHFerryDebug-<version>-windows-debug/
+```
+
 The script also generates:
 
 ```text
 release/SSHFerry-<version>-windows.zip
 release/SSHFerry-<version>-windows.sha256
 ```
+
+Important packaging notes:
+
+- Publish the full directory or generated `.zip`, not the standalone `.exe` only.
+- The Windows build uses `onedir` layout for better PySide6 stability.
+- UPX compression is disabled by default to reduce Qt runtime issues and antivirus false positives.
 
 Recommended release flow:
 

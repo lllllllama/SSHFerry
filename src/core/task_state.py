@@ -1,17 +1,18 @@
-"""Task state machine – validates and enforces legal state transitions."""
+﻿"""Task state machine: validates and enforces legal state transitions."""
 
 # Legal transitions: current_state -> set of allowed next states
 TRANSITIONS: dict[str, set[str]] = {
-    "pending":  {"running", "canceled"},
-    "running":  {"done", "failed", "paused", "canceled"},
-    "paused":   {"running", "canceled"},
-    "done":     set(),
-    "failed":   set(),
+    "pending": {"running", "canceled"},
+    "running": {"done", "failed", "paused", "canceled", "skipped"},
+    "paused": {"running", "pending", "canceled"},
+    "skipped": set(),
+    "done": set(),
+    "failed": set(),
     "canceled": set(),
 }
 
 ALL_STATES = set(TRANSITIONS.keys())
-TERMINAL_STATES = {"done", "failed", "canceled"}
+TERMINAL_STATES = {"done", "failed", "canceled", "skipped"}
 
 
 def is_valid_transition(current: str, target: str) -> bool:

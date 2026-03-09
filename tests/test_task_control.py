@@ -105,6 +105,30 @@ def test_restart_done_task():
     assert task.bytes_done == 0
 
 
+def test_restart_done_folder_task_resets_subtask_counters():
+    mock_scheduler = create_mock_scheduler()
+    task = Task(
+        task_id="t4",
+        kind="folder_download",
+        engine="sftp",
+        src="/remote/folder",
+        dst="local/folder",
+        bytes_total=1000,
+        subtask_count=3,
+        subtask_done=3,
+        current_file="c.bin",
+        status="done",
+    )
+    mock_scheduler.add_task(task)
+
+    assert mock_scheduler.restart_task("t4") is True
+    assert task.status == "pending"
+    assert task.bytes_done == 0
+    assert task.subtask_done == 0
+    assert task.current_file == ""
+    assert task.subtask_count == 3
+
+
 def test_folder_download_updates_progress_during_file_transfer(tmp_path):
     scheduler = create_mock_scheduler()
     task = Task(

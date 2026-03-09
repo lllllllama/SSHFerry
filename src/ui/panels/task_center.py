@@ -1,4 +1,4 @@
-"""Task center panel for monitoring transfer tasks."""
+﻿"""Task center panel for monitoring transfer tasks."""
 import time
 from typing import Optional
 
@@ -93,19 +93,19 @@ class TaskCenterPanel(QWidget):
         # Spacer
         btn_layout.addStretch()
 
-        self.btn_pause = QPushButton("⏸ Pause")
+        self.btn_pause = QPushButton("Pause")
         self.btn_pause.clicked.connect(self._on_pause_clicked)
         btn_layout.addWidget(self.btn_pause)
 
-        self.btn_resume = QPushButton("▶ Resume")
+        self.btn_resume = QPushButton("Resume")
         self.btn_resume.clicked.connect(self._on_resume_clicked)
         btn_layout.addWidget(self.btn_resume)
 
-        self.btn_cancel = QPushButton("✕ Cancel")
+        self.btn_cancel = QPushButton("Cancel")
         self.btn_cancel.clicked.connect(self._on_cancel_clicked)
         btn_layout.addWidget(self.btn_cancel)
 
-        self.btn_restart = QPushButton("↻ Restart")
+        self.btn_restart = QPushButton("Restart")
         self.btn_restart.clicked.connect(self._on_restart_clicked)
         btn_layout.addWidget(self.btn_restart)
 
@@ -440,3 +440,4 @@ class TaskCenterPanel(QWidget):
             return text
         keep = max(8, (max_len - 3) // 2)
         return f"{text[:keep]}...{text[-keep:]}"
+

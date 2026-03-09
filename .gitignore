@@ -2,26 +2,70 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyo
+*.pyd
 
-# Test / tool caches
+# Python tooling caches
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.pyre/
+.hypothesis/
+
+# Test / coverage outputs
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 
 # Virtual environments
 .venv/
+.venv_compat/
+.venv_pkg/
 .venv_win/
 venv/
+env/
+ENV/
 
-# Build artifacts
+# Build / packaging artifacts
 build/
 dist/
 release/
+site/
+pip-wheel-metadata/
 *.egg-info/
+*.egg
+.eggs/
+*.zip
+*.sha256
 
-# Logs
+# Binary bundles (PyInstaller)
+*.manifest
+*.exe
+
+# Logs / runtime files
 *.log
+*.pid
+*.out
+*.err
+*.tmp
+*.bak
+*.orig
 
-# OS / editor
+# Local environment configs
+.env
+.env.*
+!.env.example
+.python-version
+.buildvenv/
+.buildcpy/
+.orchids/
+
+# IDE / editor
+.vscode/
+.idea/
+*.iml
+
+# OS files
 .DS_Store
 Thumbs.db
-.vscode/

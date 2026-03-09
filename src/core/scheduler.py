@@ -13,6 +13,7 @@ from src.engines.parallel_sftp_engine import (
     DEFAULT_PARALLEL_THRESHOLD_BYTES,
     ParallelSftpEngine,
 )
+from src.core.task_state import assert_transition
 from src.engines.scp_engine import ScpEngine
 from src.engines.sftp_engine import SftpEngine
 from src.services.metrics import MetricsCollector, TransferRecord
@@ -156,6 +157,27 @@ class TaskScheduler:
             # Return snapshots to avoid sharing mutable task objects across threads.
             return [replace(task) for task in self.tasks.values()]
 
+    def _set_task_status_locked(self, task: Task, target: str) -> None:
+        """
+        Set task status with transition validation.
+
+        We log illegal transitions for visibility, then still apply the target
+        to preserve backward-compatible runtime behavior.
+        """
+        current = task.status
+        if current == target:
+            return
+        try:
+            assert_transition(current, target)
+        except ValueError:
+            self.logger.warning(
+                "Illegal task state transition observed: %s -> %s (task=%s)",
+                current,
+                target,
+                task.task_id[:8],
+            )
+        task.status = target
+
     def cancel_task(self, task_id: str) -> bool:
         """
         Cancel a task.
@@ -172,7 +194,7 @@ class TaskScheduler:
                 return False
 
             if task.status == "pending":
-                task.status = "canceled"
+                self._set_task_status_locked(task, "canceled")
                 self.logger.info(f"Canceled pending task {task_id[:8]}")
                 return True
             elif task.status == "running":
@@ -181,7 +203,7 @@ class TaskScheduler:
                 self.logger.info(f"Interrupting running task {task_id[:8]}")
                 return True
             elif task.status == "paused":
-                task.status = "canceled"
+                self._set_task_status_locked(task, "canceled")
                 self.logger.info(f"Canceled paused task {task_id[:8]}")
                 return True
 
@@ -225,7 +247,7 @@ class TaskScheduler:
                 return False
 
             if task.status == "paused":
-                task.status = "pending"
+                self._set_task_status_locked(task, "pending")
                 task.paused = False
                 # Re-queue the task
                 if task_id not in self.queued_task_ids:
@@ -252,15 +274,18 @@ class TaskScheduler:
                 return False
 
             if task.status in ("failed", "canceled", "done", "skipped"):
-                task.status = "pending"
+                self._set_task_status_locked(task, "pending")
                 task.bytes_done = 0
                 task.speed = 0.0
                 task.error_code = None
                 task.error_message = None
                 task.start_time = None
+                task.end_time = None
                 task.interrupted = False
                 task.paused = False
                 task.skipped = False
+                task.subtask_done = 0
+                task.current_file = ""
                 
                 # Re-queue the task
                 if task_id not in self.queued_task_ids:
@@ -376,7 +401,7 @@ class TaskScheduler:
             task: Task to execute
         """
         with self.task_lock:
-            task.status = "running"
+            self._set_task_status_locked(task, "running")
             task.start_time = time.time()  # Track start time for speed calculation
 
         log_task_event(
@@ -424,7 +449,7 @@ class TaskScheduler:
             with self.task_lock:
                 # Only mark as done if it hasn't been paused/canceled/skipped
                 if task.status == "running":
-                    task.status = "done"
+                    self._set_task_status_locked(task, "done")
                     task.end_time = time.time()
                     task.bytes_done = task.bytes_total
 
@@ -451,7 +476,7 @@ class TaskScheduler:
 
         except SSHFerryError as e:
             with self.task_lock:
-                task.status = "failed"
+                self._set_task_status_locked(task, "failed")
                 task.end_time = time.time()
                 task.error_code = e.code
                 task.error_message = e.message
@@ -478,7 +503,7 @@ class TaskScheduler:
             )
         except Exception as e:
             with self.task_lock:
-                task.status = "failed"
+                self._set_task_status_locked(task, "failed")
                 task.end_time = time.time()
                 task.error_code = ErrorCode.UNKNOWN_ERROR
                 task.error_message = str(e)
@@ -521,7 +546,7 @@ class TaskScheduler:
                     # File exists and is complete - skip
                     with self.task_lock:
                         task.skipped = True
-                        task.status = "skipped"
+                        self._set_task_status_locked(task, "skipped")
                         task.bytes_done = local_size
                     self.logger.info(f"Skipped (exists): {os.path.basename(task.src)}")
                     return
@@ -557,10 +582,10 @@ class TaskScheduler:
         except InterruptedError as e:
             with self.task_lock:
                 if task.paused:
-                    task.status = "paused"
+                    self._set_task_status_locked(task, "paused")
                     self.logger.info(f"Paused: {os.path.basename(task.src)}")
                 else:
-                    task.status = "canceled"
+                    self._set_task_status_locked(task, "canceled")
                     self.logger.info(f"Canceled: {os.path.basename(task.src)}")
         finally:
             engine.disconnect()
@@ -602,7 +627,7 @@ class TaskScheduler:
                     # File exists and is complete - skip
                     with self.task_lock:
                         task.skipped = True
-                        task.status = "skipped"
+                        self._set_task_status_locked(task, "skipped")
                         task.bytes_done = remote_size
                     self.logger.info(f"Skipped (exists): {os.path.basename(task.dst)}")
                     return
@@ -635,10 +660,10 @@ class TaskScheduler:
         except InterruptedError as e:
             with self.task_lock:
                 if task.paused:
-                    task.status = "paused"
+                    self._set_task_status_locked(task, "paused")
                     self.logger.info(f"Paused: {os.path.basename(task.src)}")
                 else:
-                    task.status = "canceled"
+                    self._set_task_status_locked(task, "canceled")
                     self.logger.info(f"Canceled: {os.path.basename(task.src)}")
         finally:
             engine.disconnect()
@@ -673,17 +698,26 @@ class TaskScheduler:
                 raise InterruptedError("Task paused")
             return task.interrupted
 
-        p_engine = ParallelSftpEngine(
-            self.site_config,
-            self.logger,
-            preset_name=self.parallel_upload_preset,
-        )
-        p_engine.upload_file(
-            task.src,
-            task.dst,
-            callback=progress_callback,
-            check_interrupt=check_interrupt,
-        )
+        try:
+            p_engine = ParallelSftpEngine(
+                self.site_config,
+                self.logger,
+                preset_name=self.parallel_upload_preset,
+            )
+            p_engine.upload_file(
+                task.src,
+                task.dst,
+                callback=progress_callback,
+                check_interrupt=check_interrupt,
+            )
+        except InterruptedError:
+            with self.task_lock:
+                if task.paused:
+                    self._set_task_status_locked(task, "paused")
+                    self.logger.info(f"Paused: {os.path.basename(task.src)}")
+                else:
+                    self._set_task_status_locked(task, "canceled")
+                    self.logger.info(f"Canceled: {os.path.basename(task.src)}")
 
     def _execute_parallel_download(self, task: Task):
         """Execute download task using native parallel SFTP engine."""
@@ -703,17 +737,26 @@ class TaskScheduler:
                 raise InterruptedError("Task paused")
             return task.interrupted
 
-        p_engine = ParallelSftpEngine(
-            self.site_config,
-            self.logger,
-            preset_name=self.parallel_download_preset,
-        )
-        p_engine.download_file(
-            task.src,
-            task.dst,
-            callback=progress_callback,
-            check_interrupt=check_interrupt,
-        )
+        try:
+            p_engine = ParallelSftpEngine(
+                self.site_config,
+                self.logger,
+                preset_name=self.parallel_download_preset,
+            )
+            p_engine.download_file(
+                task.src,
+                task.dst,
+                callback=progress_callback,
+                check_interrupt=check_interrupt,
+            )
+        except InterruptedError:
+            with self.task_lock:
+                if task.paused:
+                    self._set_task_status_locked(task, "paused")
+                    self.logger.info(f"Paused: {os.path.basename(task.src)}")
+                else:
+                    self._set_task_status_locked(task, "canceled")
+                    self.logger.info(f"Canceled: {os.path.basename(task.src)}")
 
     def _execute_scp_upload(self, task: Task):
         """Execute upload task using SCP and fallback to SFTP once on transfer failure."""

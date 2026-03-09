@@ -395,6 +395,7 @@ class MainWindow(QMainWindow):
         self.remote_panel.request_expand.connect(self._remote_expand)  # New handler
         self.remote_panel.request_go_up.connect(self._remote_go_up)
         self.remote_panel.request_refresh.connect(self._remote_refresh)
+        self.remote_panel.request_refresh_node.connect(self._remote_refresh_node)
         self.remote_panel.request_mkdir.connect(self._remote_mkdir)
         self.remote_panel.request_delete.connect(self._remote_delete)
         self.remote_panel.request_rename.connect(self._remote_rename)
@@ -654,6 +655,10 @@ class MainWindow(QMainWindow):
         # TODO: Ideally should refresh expanded nodes too, but for now just root or user has to collapse/expand.
         # Or we could track expanded paths.
         self._list_remote_dir(self.remote_panel.current_path)
+
+    def _remote_refresh_node(self, path: str, item: QTreeWidgetItem):
+        """Refresh a specific directory node and keep current root view."""
+        self._list_remote_dir(path, item)
 
     # ------------------------------------------------------------------
     # Remote file operations (mkdir / delete / rename)

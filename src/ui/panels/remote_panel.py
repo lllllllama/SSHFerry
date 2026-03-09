@@ -1,7 +1,7 @@
 ﻿"""Remote file panel for displaying remote directory contents."""
 import os
 
-from PySide6.QtCore import QByteArray, QMimeData, QTimer, Qt, Signal
+from PySide6.QtCore import QByteArray, QMimeData, Qt, Signal
 from PySide6.QtGui import QColor, QDrag, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -84,6 +84,7 @@ class RemotePanel(QWidget):
     # Request signals
     request_go_up = Signal()
     request_refresh = Signal()
+    request_refresh_node = Signal(str, object)  # path, node item
     request_mkdir = Signal(str, object)  # new dir name, parent item
     request_delete = Signal(RemoteEntry)
     request_rename = Signal(RemoteEntry, str)  # entry, new_name
@@ -99,12 +100,10 @@ class RemotePanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_path = "/"
-        self._drag_anim_phase = 0
         self._drag_anim_active = False
-        self._drag_colors = ["#cce4f7", "#a9dcff"]
-        self._drag_timer = QTimer(self)
-        self._drag_timer.timeout.connect(self._on_drag_anim_tick)
         self._base_tree_stylesheet = ""
+        self._drag_saved_current_item = None
+        self._drag_saved_selected_items = []
         self._init_ui()
 
     def _init_ui(self):
@@ -122,7 +121,7 @@ class RemotePanel(QWidget):
 
         self.btn_refresh = QPushButton("Refresh")
         self.btn_refresh.setFixedWidth(60)
-        self.btn_refresh.clicked.connect(lambda: self.request_refresh.emit())
+        self.btn_refresh.clicked.connect(self._on_refresh_clicked)
         nav.addWidget(self.btn_refresh)
 
         self.path_label = QLabel("Remote: /")
@@ -301,11 +300,31 @@ class RemotePanel(QWidget):
     # Context menu
     # ------------------------------------------------------------------
 
+    def _on_refresh_clicked(self):
+        """Refresh selected node if possible, otherwise refresh root view."""
+        self._emit_refresh_for_item(self.tree.currentItem())
+
+    def _emit_refresh_for_item(self, item: QTreeWidgetItem | None):
+        """Emit refresh signal for the most relevant directory context."""
+        if item:
+            entry = item.data(0, Qt.UserRole)
+            if entry and entry.is_dir:
+                self.request_refresh_node.emit(entry.path, item)
+                return
+            parent = item.parent()
+            if parent:
+                parent_entry = parent.data(0, Qt.UserRole)
+                if parent_entry and parent_entry.is_dir:
+                    self.request_refresh_node.emit(parent_entry.path, parent)
+                    return
+        self.request_refresh.emit()
+
     def _show_context_menu(self, pos):
         menu = QMenu(self)
 
+        target_item = self.tree.itemAt(pos)
         act_refresh = menu.addAction("Refresh")
-        act_refresh.triggered.connect(lambda: self.request_refresh.emit())
+        act_refresh.triggered.connect(lambda: self._emit_refresh_for_item(target_item))
 
         menu.addSeparator()
 
@@ -414,41 +433,28 @@ class RemotePanel(QWidget):
         """Highlight hovered target directory during drag."""
         item = self._target_item_from_pos(panel_pos)
         if item:
-            self.tree.setCurrentItem(item)
             self._start_drag_animation()
-        else:
             self.tree.clearSelection()
+            item.setSelected(True)
+            self.tree.setCurrentItem(item)
 
     def _start_drag_animation(self):
-        """Start pulsing selected-directory highlight."""
+        """Mark drag as active and preserve existing selection state."""
         if self._drag_anim_active:
             return
         self._drag_anim_active = True
-        self._drag_anim_phase = 0
-        self._apply_drag_selection_color(self._drag_colors[self._drag_anim_phase])
-        self._drag_timer.start(160)
+        self._drag_saved_current_item = self.tree.currentItem()
+        self._drag_saved_selected_items = list(self.tree.selectedItems())
 
     def _stop_drag_animation(self):
-        """Stop pulsing highlight and restore base style."""
-        self._drag_timer.stop()
+        """Restore previous selection state after drag feedback."""
         self._drag_anim_active = False
-        self.tree.setStyleSheet(self._base_tree_stylesheet)
         self.tree.clearSelection()
-
-    def _on_drag_anim_tick(self):
-        """Pulse selected color while dragging."""
-        if not self._drag_anim_active:
-            return
-        self._drag_anim_phase = (self._drag_anim_phase + 1) % len(self._drag_colors)
-        self._apply_drag_selection_color(self._drag_colors[self._drag_anim_phase])
-
-    def _apply_drag_selection_color(self, color: str):
-        """Apply temporary selected-item color for drag feedback."""
-        override = (
-            "\nQTreeWidget::item:selected {"
-            f"background-color: {color}; color: #333333;"
-            "}\n"
-        )
-        self.tree.setStyleSheet(self._base_tree_stylesheet + override)
+        for item in self._drag_saved_selected_items:
+            item.setSelected(True)
+        if self._drag_saved_current_item:
+            self.tree.setCurrentItem(self._drag_saved_current_item)
+        self._drag_saved_current_item = None
+        self._drag_saved_selected_items = []
 
 
