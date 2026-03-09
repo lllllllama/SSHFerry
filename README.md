@@ -72,18 +72,17 @@ python3 -m src.app.main
 Build a distributable GUI app (`SSHFerry.exe`) with PyInstaller:
 
 ```powershell
-python -m pip install ".[build]"
-powershell -ExecutionPolicy Bypass -File .\tools\build_windows.ps1
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows.ps1 -VenvPath .venv_compat
 ```
 
 Recommended validation flow on Windows:
 
 ```powershell
 # 1) Build a console-enabled debug package first
-powershell -ExecutionPolicy Bypass -File .\tools\build_windows.ps1 -Clean -Debug
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows.ps1 -Clean -Debug -VenvPath .venv_compat
 
 # 2) After startup/connect checks pass, build the GUI release package
-powershell -ExecutionPolicy Bypass -File .\tools\build_windows.ps1 -Clean
+powershell -ExecutionPolicy Bypass -File .\tools\build_windows.ps1 -Clean -VenvPath .venv_compat
 ```
 
 Or use the wrapper:
@@ -121,6 +120,52 @@ Recommended release flow:
 
 1. Upload the `.zip` file.
 2. Publish the `.sha256` checksum alongside it for integrity verification.
+
+### GitHub Release Checklist
+
+Before creating a GitHub Release, verify the following:
+
+1. `pytest -q` passes locally.
+2. `release/SSHFerryDebug-<version>-windows-debug/SSHFerryDebug.exe` starts correctly.
+3. `release/SSHFerry-<version>-windows/SSHFerry.exe` starts correctly.
+4. Local file panel icons render correctly on Windows.
+5. `startup.log` is created under `%USERPROFILE%\AppData\Local\SSHFerry\` when needed.
+
+Recommended GitHub Release assets:
+
+- `SSHFerry-<version>-windows.zip`
+- `SSHFerry-<version>-windows.sha256`
+- optional: `SSHFerryDebug-<version>-windows-debug.zip` for testers only
+
+Suggested release notes template:
+
+```text
+Highlights
+- Fixed Windows packaged app startup stability
+- Improved local file icon handling
+- Stabilized PySide6/PyInstaller build toolchain
+
+Downloads
+- SSHFerry-<version>-windows.zip
+- SSHFerry-<version>-windows.sha256
+
+Notes
+- Keep the whole extracted folder together; do not run only the .exe
+- sites.json: %USERPROFILE%\AppData\Local\SSHFerry\sites.json
+- startup.log: %USERPROFILE%\AppData\Local\SSHFerry\startup.log
+```
+
+Recommended tag workflow:
+
+```powershell
+git add .
+git commit -m "release: prepare v<version>"
+git push origin main
+git tag v<version>
+git push origin v<version>
+```
+
+After the tag is pushed, create a GitHub Release from `v<version>` and upload the generated `.zip` and `.sha256`.
 
 ## ✅ Functional Verification
 
