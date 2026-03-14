@@ -4,6 +4,7 @@ from typing import Optional
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -106,8 +107,12 @@ class SiteEditorDialog(QDialog):
 
         self.password_edit = QLineEdit()
         self.password_edit.setEchoMode(QLineEdit.Password)
-        self.password_edit.setPlaceholderText("Enter password (not saved to file)")
+        self.password_edit.setPlaceholderText("Enter password")
         auth_layout.addRow("Password:", self.password_edit)
+
+        self.remember_password_check = QCheckBox("Save password to sites.json")
+        self.remember_password_check.setToolTip("Disabled by default. Enable only on trusted devices.")
+        auth_layout.addRow("", self.remember_password_check)
 
         self.key_path_edit = QLineEdit()
         self.key_path_button = QPushButton("Browse...")
@@ -167,6 +172,7 @@ class SiteEditorDialog(QDialog):
         is_password = (method == "password")
 
         self.password_edit.setVisible(is_password)
+        self.remember_password_check.setVisible(is_password)
         self.key_path_edit.setVisible(not is_password)
         self.key_path_button.setVisible(not is_password)
         self.key_passphrase_edit.setVisible(not is_password)
@@ -195,6 +201,7 @@ class SiteEditorDialog(QDialog):
 
         if config.password:
             self.password_edit.setText(config.password)
+        self.remember_password_check.setChecked(config.remember_password)
         if config.key_path:
             self.key_path_edit.setText(config.key_path)
         if config.key_passphrase:
@@ -236,9 +243,11 @@ class SiteEditorDialog(QDialog):
         # Add credentials (runtime only)
         if auth_method == "password":
             config.password = self.password_edit.text() or None
+            config.remember_password = self.remember_password_check.isChecked()
         else:
             config.key_path = self.key_path_edit.text() or None
             config.key_passphrase = self.key_passphrase_edit.text() or None
+            config.remember_password = False
 
         self.site_saved.emit(config)
         self.accept()

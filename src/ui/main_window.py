@@ -1,11 +1,13 @@
-"""Main application window."""
+"""Main application window with dynamic remote sessions."""
 import os
+import uuid
+from dataclasses import dataclass
 from typing import List, Optional
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QComboBox,
-    QFileDialog,
+    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -20,8 +22,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
 from PySide6.QtWidgets import QTreeWidgetItem
+
 from src.core.scheduler import TaskScheduler
 from src.engines.sftp_engine import SftpEngine
 from src.services.connection_checker import ConnectionChecker
@@ -35,9 +37,6 @@ from src.ui.panels.remote_panel import RemotePanel
 from src.ui.panels.task_center import TaskCenterPanel
 from src.ui.widgets.site_editor import SiteEditorDialog
 
-# ---------------------------------------------------------------------------
-# Background threads (all network I/O off the UI thread)
-# ---------------------------------------------------------------------------
 
 class ConnectionCheckThread(QThread):
     check_completed = Signal(list)
@@ -48,13 +47,12 @@ class ConnectionCheckThread(QThread):
 
     def run(self):
         checker = ConnectionChecker(self.site_config)
-        results = checker.run_all_checks()
-        self.check_completed.emit(results)
+        self.check_completed.emit(checker.run_all_checks())
 
 
 class ListDirThread(QThread):
-    list_completed = Signal(str, list, object)  # path, entries, parent_item
-    list_failed = Signal(str, str)      # path, error
+    list_completed = Signal(str, list, object)
+    list_failed = Signal(str, str)
 
     def __init__(self, site_config: SiteConfig, remote_path: str, parent_item: Optional[QTreeWidgetItem] = None):
         super().__init__()
@@ -68,10 +66,10 @@ class ListDirThread(QThread):
             engine.connect()
             entries = engine.list_dir(self.remote_path)
             self.list_completed.emit(self.remote_path, entries, self.parent_item)
-        except SSHFerryError as e:
-            self.list_failed.emit(self.remote_path, f"[{e.code.name}] {e.message}")
-        except Exception as e:
-            self.list_failed.emit(self.remote_path, str(e))
+        except SSHFerryError as exc:
+            self.list_failed.emit(self.remote_path, f"[{exc.code.name}] {exc.message}")
+        except Exception as exc:
+            self.list_failed.emit(self.remote_path, str(exc))
         finally:
             try:
                 engine.disconnect()
@@ -80,18 +78,14 @@ class ListDirThread(QThread):
 
 
 class RemoteOpThread(QThread):
-    """Generic thread for single remote operations (mkdir / delete / rename)."""
     op_done = Signal()
     op_failed = Signal(str)
 
-    def __init__(self, site_config: SiteConfig, func_name: str, *args, **kwargs):
+    def __init__(self, site_config: SiteConfig, func_name: str, *args):
         super().__init__()
         self.site_config = site_config
         self.func_name = func_name
         self.args = args
-        self.kwargs = kwargs
-        # Extract optional 'parent_item' from kwargs if present (not used by SftpEngine but by callback)
-        self.parent_item = kwargs.get('parent_item')
 
     def run(self):
         engine = SftpEngine(self.site_config)
@@ -99,10 +93,10 @@ class RemoteOpThread(QThread):
             engine.connect()
             getattr(engine, self.func_name)(*self.args)
             self.op_done.emit()
-        except SSHFerryError as e:
-            self.op_failed.emit(f"[{e.code.name}] {e.message}")
-        except Exception as e:
-            self.op_failed.emit(str(e))
+        except SSHFerryError as exc:
+            self.op_failed.emit(f"[{exc.code.name}] {exc.message}")
+        except Exception as exc:
+            self.op_failed.emit(str(exc))
         finally:
             try:
                 engine.disconnect()
@@ -111,9 +105,8 @@ class RemoteOpThread(QThread):
 
 
 class ScanRemoteDirThread(QThread):
-    """Background remote directory scan for recursive file/byte totals."""
-    scan_completed = Signal(str, int, int)  # path, total_files, total_bytes
-    scan_failed = Signal(str, str)          # path, error
+    scan_completed = Signal(str, int, int)
+    scan_failed = Signal(str, str)
 
     def __init__(self, site_config: SiteConfig, remote_path: str):
         super().__init__()
@@ -126,10 +119,10 @@ class ScanRemoteDirThread(QThread):
             engine.connect()
             total_files, total_bytes = self._scan_recursive(engine, self.remote_path)
             self.scan_completed.emit(self.remote_path, total_files, total_bytes)
-        except SSHFerryError as e:
-            self.scan_failed.emit(self.remote_path, f"[{e.code.name}] {e.message}")
-        except Exception as e:
-            self.scan_failed.emit(self.remote_path, str(e))
+        except SSHFerryError as exc:
+            self.scan_failed.emit(self.remote_path, f"[{exc.code.name}] {exc.message}")
+        except Exception as exc:
+            self.scan_failed.emit(self.remote_path, str(exc))
         finally:
             try:
                 engine.disconnect()
@@ -150,202 +143,50 @@ class ScanRemoteDirThread(QThread):
         return total_files, total_bytes
 
 
-# ---------------------------------------------------------------------------
-# MainWindow
-# ---------------------------------------------------------------------------
+@dataclass
+class RemoteSession:
+    session_id: str
+    site: SiteConfig
+    panel: RemotePanel
+    container: QWidget
+    status_label: QLabel
+    selector: QComboBox
+    connected: bool = False
+
 
 class MainWindow(QMainWindow):
-    # Class variable to track window count for naming
     _window_count = 0
-    
+
     def __init__(self):
         super().__init__()
         MainWindow._window_count += 1
         self._window_number = MainWindow._window_count
-        
-        self.logger = setup_logger()
-        self.sites: List[SiteConfig] = []
-        self.current_site: Optional[SiteConfig] = None
-        self.scheduler: Optional[TaskScheduler] = None
-        self.site_store = SiteStore()
-        self.window_manager = None  # Set by WindowManager
 
-        # Keep references to background threads so they aren't GC'd
+        self.logger = setup_logger()
+        self.site_store = SiteStore()
+        self.sites: List[SiteConfig] = []
+        self.scheduler = TaskScheduler(logger=self.logger)
+        self.window_manager = None
         self._bg_threads: List[QThread] = []
+        self.sessions: dict[str, RemoteSession] = {}
+        self._session_order: list[str] = []
+        self._active_session_id: str | None = None
 
         self.setWindowTitle(f"SSHFerry #{self._window_number}")
-        self.resize(1400, 850)
-
-        # Apply modern white-blue stylesheet
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #f5f7fa;
-            }
-            QWidget {
-                background-color: #ffffff;
-                color: #333333;
-                font-family: 'Segoe UI', Arial, sans-serif;
-                font-size: 13px;
-            }
-            QPushButton {
-                background-color: #0078d4;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: 500;
-                min-width: 80px;
-            }
-            QPushButton:hover {
-                background-color: #106ebe;
-                border: 1px solid #0078d4;
-            }
-            QPushButton:pressed {
-                background-color: #005a9e;
-                padding: 9px 15px 7px 17px;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-                color: #888888;
-            }
-            /* Secondary/outline buttons */
-            QPushButton[flat="true"] {
-                background-color: transparent;
-                color: #0078d4;
-                border: 1px solid #0078d4;
-            }
-            QPushButton[flat="true"]:hover {
-                background-color: #e5f1fb;
-            }
-            QLineEdit, QComboBox {
-                background-color: #ffffff;
-                border: 1px solid #d0d0d0;
-                border-radius: 4px;
-                padding: 6px 10px;
-                color: #333333;
-                min-height: 20px;
-            }
-            QLineEdit:focus, QComboBox:focus {
-                border-color: #0078d4;
-                border-width: 2px;
-            }
-            QComboBox:hover {
-                border-color: #0078d4;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 24px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #ffffff;
-                border: 1px solid #d0d0d0;
-                selection-background-color: #cce4f7;
-                selection-color: #333333;
-                padding: 4px;
-            }
-            QComboBox QAbstractItemView::item {
-                padding: 6px 10px;
-                min-height: 24px;
-            }
-            QComboBox QAbstractItemView::item:hover {
-                background-color: #e5f1fb;
-            }
-            /* Tooltips */
-            QToolTip {
-                background-color: #333333;
-                color: #ffffff;
-                border: none;
-                padding: 6px 10px;
-                border-radius: 4px;
-            }
-            QListWidget, QTableWidget, QTreeView {
-                background-color: #ffffff;
-                border: 1px solid #e0e0e0;
-                border-radius: 4px;
-                alternate-background-color: #f8f9fa;
-            }
-            QListWidget::item:selected, QTableWidget::item:selected, QTreeView::item:selected {
-                background-color: #cce4f7;
-                color: #333333;
-            }
-            QListWidget::item:hover, QTableWidget::item:hover {
-                background-color: #e5f1fb;
-            }
-            QLabel {
-                color: #333333;
-                background-color: transparent;
-            }
-            QSplitter::handle {
-                background-color: #e0e0e0;
-            }
-            QHeaderView::section {
-                background-color: #f0f4f8;
-                color: #333333;
-                padding: 8px;
-                border: 1px solid #e0e0e0;
-                font-weight: bold;
-            }
-            QScrollBar:vertical {
-                background-color: #f5f5f5;
-                width: 12px;
-                border-radius: 6px;
-            }
-            QScrollBar::handle:vertical {
-                background-color: #c0c0c0;
-                border-radius: 6px;
-                min-height: 30px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background-color: #0078d4;
-            }
-            QStatusBar {
-                background-color: #0078d4;
-                color: white;
-            }
-            QTextEdit {
-                background-color: #ffffff;
-                border: 1px solid #e0e0e0;
-                border-radius: 4px;
-            }
-            QMenu {
-                background-color: #ffffff;
-                border: 1px solid #d0d0d0;
-                border-radius: 4px;
-                padding: 4px 0px;
-            }
-            QMenu::item {
-                padding: 6px 24px 6px 12px;
-                background-color: transparent;
-                color: #333333;
-            }
-            QMenu::item:selected {
-                background-color: #e5f1fb;
-                color: #0078d4;
-            }
-            QMenu::separator {
-                height: 1px;
-                background-color: #e0e0e0;
-                margin: 4px 0px;
-            }
-        """)
+        self.resize(1520, 900)
 
         self._init_ui()
         self._load_saved_sites()
-
-    # ------------------------------------------------------------------
-    # UI setup
-    # ------------------------------------------------------------------
+        self.scheduler.start()
 
     def _init_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
         root_layout = QHBoxLayout(central)
 
-        # --- Left: site list ---
         left = QWidget()
         left_lay = QVBoxLayout(left)
         left_lay.setContentsMargins(0, 0, 0, 0)
-
         left_lay.addWidget(QLabel("Sites"))
         self.site_list = QListWidget()
         self.site_list.itemClicked.connect(self._on_site_selected)
@@ -359,17 +200,21 @@ class MainWindow(QMainWindow):
         self.btn_edit_site.clicked.connect(self._edit_site)
         left_lay.addWidget(self.btn_edit_site)
 
+        self.btn_remove_site = QPushButton("Remove Site")
+        self.btn_remove_site.clicked.connect(self._remove_site)
+        left_lay.addWidget(self.btn_remove_site)
+
         self.btn_check_connection = QPushButton("Check Connection")
         self.btn_check_connection.clicked.connect(self._check_connection)
         left_lay.addWidget(self.btn_check_connection)
 
-        self.btn_connect_site = QPushButton("Connect")
-        self.btn_connect_site.clicked.connect(self._connect_to_site)
-        left_lay.addWidget(self.btn_connect_site)
+        self.btn_new_session = QPushButton("Open Session")
+        self.btn_new_session.clicked.connect(self._create_session_from_selection)
+        left_lay.addWidget(self.btn_new_session)
 
-        self.conn_label = QLabel("Disconnected")
-        self.conn_label.setStyleSheet("color: #b42318; font-weight: 600;")
-        left_lay.addWidget(self.conn_label)
+        self.btn_remove_session = QPushButton("Close Session")
+        self.btn_remove_session.clicked.connect(self._remove_current_session)
+        left_lay.addWidget(self.btn_remove_session)
 
         left_lay.addWidget(QLabel("Task Protocol Override"))
         self.transfer_override_combo = QComboBox()
@@ -379,34 +224,38 @@ class MainWindow(QMainWindow):
         left_lay.addWidget(self.transfer_override_combo)
         left.setMaximumWidth(220)
 
-        # --- Centre: dual-panel ---
-        panel_splitter = QSplitter(Qt.Horizontal)
-
         self.local_panel = LocalPanel()
-        panel_splitter.addWidget(self.local_panel)
-
-        self.remote_panel = RemotePanel()
-        panel_splitter.addWidget(self.remote_panel)
-        panel_splitter.setStretchFactor(0, 1)
-        panel_splitter.setStretchFactor(1, 1)
-
-        # Wire remote panel signals
-        self.remote_panel.entry_activated.connect(self._on_remote_entry_activated)
-        self.remote_panel.request_expand.connect(self._remote_expand)  # New handler
-        self.remote_panel.request_go_up.connect(self._remote_go_up)
-        self.remote_panel.request_refresh.connect(self._remote_refresh)
-        self.remote_panel.request_refresh_node.connect(self._remote_refresh_node)
-        self.remote_panel.request_mkdir.connect(self._remote_mkdir)
-        self.remote_panel.request_delete.connect(self._remote_delete)
-        self.remote_panel.request_rename.connect(self._remote_rename)
-        self.remote_panel.request_upload.connect(self._upload_files)
-        self.remote_panel.request_upload_paths.connect(self._upload_paths)
-        self.remote_panel.request_download.connect(self._download_entry)
-
-        # Wire local panel signals for download via drag-drop
         self.local_panel.files_dropped.connect(self._download_paths)
 
-        # --- Bottom: task center + log ---
+        self.remote_area = QWidget()
+        remote_area_layout = QVBoxLayout(self.remote_area)
+        remote_area_layout.setContentsMargins(0, 0, 0, 0)
+        self.remote_placeholder = QLabel("No remote sessions open")
+        self.remote_placeholder.setAlignment(Qt.AlignCenter)
+        self.remote_splitter = QSplitter(Qt.Horizontal)
+        self.remote_splitter.setChildrenCollapsible(False)
+        self.remote_splitter.setHandleWidth(10)
+        self.remote_splitter.setOpaqueResize(False)
+        self.remote_splitter.setStyleSheet(
+            "QSplitter::handle { background-color: palette(mid); }"
+        )
+        remote_area_layout.addWidget(self.remote_placeholder)
+        remote_area_layout.addWidget(self.remote_splitter)
+        self._refresh_remote_area()
+
+        panel_splitter = QSplitter(Qt.Horizontal)
+        panel_splitter.setChildrenCollapsible(False)
+        panel_splitter.setHandleWidth(10)
+        panel_splitter.setOpaqueResize(False)
+        panel_splitter.setStyleSheet(
+            "QSplitter::handle { background-color: palette(mid); }"
+        )
+        panel_splitter.addWidget(self.local_panel)
+        panel_splitter.addWidget(self.remote_area)
+        panel_splitter.setStretchFactor(0, 1)
+        panel_splitter.setStretchFactor(1, 2)
+        panel_splitter.setSizes([480, 1040])
+
         bottom_splitter = QSplitter(Qt.Horizontal)
         self.task_center = TaskCenterPanel()
         self.task_center.request_pause.connect(self.pause_task)
@@ -423,7 +272,6 @@ class MainWindow(QMainWindow):
         bottom_splitter.setStretchFactor(0, 2)
         bottom_splitter.setStretchFactor(1, 1)
 
-        # --- Compose ---
         right_splitter = QSplitter(Qt.Vertical)
         right_splitter.addWidget(panel_splitter)
         right_splitter.addWidget(bottom_splitter)
@@ -433,51 +281,43 @@ class MainWindow(QMainWindow):
         main_splitter = QSplitter(Qt.Horizontal)
         main_splitter.addWidget(left)
         main_splitter.addWidget(right_splitter)
-        main_splitter.setStretchFactor(0, 0)
         main_splitter.setStretchFactor(1, 1)
-
         root_layout.addWidget(main_splitter)
 
-        # Status bar
         self.setStatusBar(QStatusBar())
-        
-        # Menu bar
         self._create_menu_bar()
 
-        # Task refresh timer
         self._task_timer = QTimer()
         self._task_timer.timeout.connect(self._refresh_tasks)
         self._task_timer.start(350)
         self._update_site_action_buttons()
 
     def _create_menu_bar(self):
-        """Create the application menu bar."""
         menu_bar = self.menuBar()
-        
-        # File menu
         file_menu = menu_bar.addMenu("&File")
-        
-        # New Window action
         new_window_action = file_menu.addAction("&New Window")
         new_window_action.setShortcut("Ctrl+N")
         new_window_action.triggered.connect(self._new_window)
-        
         file_menu.addSeparator()
-        
-        # Close Window action
+        add_session_action = file_menu.addAction("Open Session")
+        add_session_action.setShortcut("Ctrl+T")
+        add_session_action.triggered.connect(self._create_session_from_selection)
         close_action = file_menu.addAction("&Close Window")
         close_action.setShortcut("Ctrl+W")
         close_action.triggered.connect(self.close)
 
     def _new_window(self):
-        """Create a new window."""
         if self.window_manager:
             self.window_manager.create_window()
-            self._log(f"Opened new window #{MainWindow._window_count}")
 
-    # ------------------------------------------------------------------
-    # Site management
-    # ------------------------------------------------------------------
+    def _selected_site(self) -> Optional[SiteConfig]:
+        item = self.site_list.currentItem()
+        if not item:
+            return None
+        idx = self.site_list.row(item)
+        if 0 <= idx < len(self.sites):
+            return self.sites[idx]
+        return None
 
     def _add_site(self):
         dlg = SiteEditorDialog(parent=self)
@@ -488,347 +328,467 @@ class MainWindow(QMainWindow):
         self.sites.append(cfg)
         self.site_list.addItem(cfg.name)
         self.site_list.setCurrentRow(len(self.sites) - 1)
-        self.current_site = cfg
-        self._update_site_action_buttons()
         self._save_sites()
-        self._log(f"Saved site: {cfg.name}")
+        self._refresh_session_selectors()
+        self._update_site_action_buttons()
 
-    def _on_site_selected(self, item: QListWidgetItem):
-        idx = self.site_list.row(item)
-        if 0 <= idx < len(self.sites):
-            self.current_site = self.sites[idx]
-            self._update_site_action_buttons()
-            self._log(f"Selected: {self.current_site.name}")
+    def _on_site_selected(self, _item: QListWidgetItem):
+        self._update_site_action_buttons()
 
     def _edit_site(self):
-        """Edit the currently selected site."""
-        if not self.current_site:
+        site = self._selected_site()
+        if not site:
             QMessageBox.warning(self, "No Site Selected", "Please select a site to edit.")
             return
-
-        # Find index of current site
-        try:
-            idx = self.sites.index(self.current_site)
-        except ValueError:
-            return
-
-        dlg = SiteEditorDialog(site_config=self.current_site, parent=self)
-        # Connect to a specific handler for edits
+        idx = self.sites.index(site)
+        dlg = SiteEditorDialog(site_config=site, parent=self)
         dlg.site_saved.connect(lambda cfg: self._on_site_edited(idx, cfg))
         dlg.exec()
 
     def _on_site_edited(self, idx: int, cfg: SiteConfig):
-        """Handle saving an edited site."""
-        # Update site in list
         self.sites[idx] = cfg
-        self.current_site = cfg
-        
-        # Update UI list item
         item = self.site_list.item(idx)
         if item:
             item.setText(cfg.name)
-            
-        self._log(f"Updated site: {cfg.name}")
-        self._update_site_action_buttons()
         self._save_sites()
+        self._refresh_session_selectors()
+        self._update_site_action_buttons()
 
-    # ------------------------------------------------------------------
-    # Connection
-    # ------------------------------------------------------------------
-
-    def _check_connection(self):
-        if not self._ensure_site():
-            return
-        self._log(f"Checking {self.current_site.name}...")
-        t = ConnectionCheckThread(self.current_site)
-        t.check_completed.connect(self._on_check_completed)
-        self._start_thread(t)
-
-    def _on_check_completed(self, results):
-        lines = [f"{'PASS' if r.passed else 'FAIL'} {r.name}: {r.message}" for r in results]
-        ok = all(r.passed for r in results)
-        title = "All Passed" if ok else "Some Failed"
-        func = QMessageBox.information if ok else QMessageBox.warning
-        func(self, title, "\n".join(lines))
-        for line in lines:
-            self._log(f"  {line}")
-
-    def _connect_to_site(self):
-        if not self._ensure_site():
+    def _remove_site(self):
+        site = self._selected_site()
+        if not site:
+            QMessageBox.warning(self, "No Site Selected", "Please select a site to remove.")
             return
 
-        # Prompt for password if not set
-        if self.current_site.auth_method == "password" and not self.current_site.password:
-            from PySide6.QtWidgets import QLineEdit
-            pwd, ok = QInputDialog.getText(
-                self, "Password",
-                f"Password for {self.current_site.username}@{self.current_site.host}:",
-                QLineEdit.EchoMode.Password,
-            )
-            if not ok or not pwd:
-                return
-            self.current_site.password = pwd
-
-        # Default empty remote_root to root
-        if not self.current_site.remote_root or not self.current_site.remote_root.strip():
-            self.current_site.remote_root = "/"
-
-        self._log(f"Connecting to {self.current_site.name}...")
-        self.conn_label.setText("Connecting...")
-        self.conn_label.setStyleSheet("color: #b54708; font-weight: 600;")
-        self.btn_connect_site.setEnabled(False)
-
-        if self.scheduler:
-            self.scheduler.stop()
-
-        self.scheduler = TaskScheduler(self.current_site, logger=self.logger)
-        self.scheduler.start()
-        self._task_timer.start(350)
-
-        self.conn_label.setText(f"Connected: {self.current_site.name}")
-        self.conn_label.setStyleSheet("color: #067647; font-weight: 600;")
-        self.btn_connect_site.setEnabled(True)
-        self._list_remote_dir(self.current_site.remote_root)
-
-    # ------------------------------------------------------------------
-    # Remote navigation
-    # ------------------------------------------------------------------
-
-    def _list_remote_dir(self, path: str, parent_item: Optional[QTreeWidgetItem] = None):
-        if not self.current_site:
-            return
-        self._log(f"Listing {path}")
-        self.statusBar().showMessage(f"Listing remote path: {path}")
-        t = ListDirThread(self.current_site, path, parent_item)
-        t.list_completed.connect(self._on_list_completed)
-        t.list_failed.connect(self._on_list_failed)
-        self._start_thread(t)
-
-    def _remote_expand(self, path: str, item: QTreeWidgetItem):
-        """Handle tree expansion request."""
-        self._list_remote_dir(path, item)
-
-    def _on_list_completed(self, path: str, entries: list, parent_item: Optional[QTreeWidgetItem]):
-        if parent_item:
-            # Populate specific node
-            self.remote_panel.populate_node(parent_item, entries)
-        else:
-            # Populate root
-            self.remote_panel.set_path(path)
-            self.remote_panel.set_root_entries(entries)
-        
-        self._log(f"  {len(entries)} items in {path}")
-        self.statusBar().showMessage(f"Loaded {len(entries)} items from {path}", 2500)
-
-    def _on_list_failed(self, path: str, msg: str):
-        self._log(f"List failed ({path}): {msg}")
-        self.conn_label.setText("Disconnected")
-        self.conn_label.setStyleSheet("color: #b42318; font-weight: 600;")
-        self.btn_connect_site.setEnabled(True)
-        self.statusBar().showMessage(f"List failed: {path}", 4000)
-        QMessageBox.critical(self, "Error", msg)
-
-    def _on_remote_entry_activated(self, entry: RemoteEntry):
-        self._log(f"Activated: {entry.path} (is_dir={entry.is_dir})")
-        # For tree view, double click typically just expands/collapses. 
-        # If we want double click to 'enter' directory (change root), we can keep this.
-        # But user requested "folder expand", so usually we don't change root unless explicitly requested.
-        pass
-        # if entry.is_dir:
-        #     self._list_remote_dir(entry.path)
-        # else:
-        #     self._log(f"File: {entry.name} ({entry.size} bytes)")
-
-    def _remote_go_up(self):
-        if not self.current_site:
-            return
-        parent = get_remote_parent(self.remote_panel.current_path)
-        if parent:
-            try:
-                ensure_in_sandbox(parent, self.current_site.remote_root)
-                self._list_remote_dir(parent)
-            except Exception:
-                self._log("Already at sandbox root")
-
-    def _remote_refresh(self):
-        # Refresh current root. 
-        # TODO: Ideally should refresh expanded nodes too, but for now just root or user has to collapse/expand.
-        # Or we could track expanded paths.
-        self._list_remote_dir(self.remote_panel.current_path)
-
-    def _remote_refresh_node(self, path: str, item: QTreeWidgetItem):
-        """Refresh a specific directory node and keep current root view."""
-        self._list_remote_dir(path, item)
-
-    # ------------------------------------------------------------------
-    # Remote file operations (mkdir / delete / rename)
-    # ------------------------------------------------------------------
-
-    def _remote_mkdir(self, name: str, parent_item: QTreeWidgetItem = None):
-        if not self._ensure_site():
-            return
-            
-        # Determine parent path
-        if parent_item:
-            # If created under a specific node
-            entry = parent_item.data(0, Qt.UserRole)
-            parent_path = entry.path if entry else self.remote_panel.current_path
-        else:
-            # Use current view root or specific target
-            parent_path = self.remote_panel.get_current_target_dir()
-
-        full = join_remote_path(parent_path, name)
-        self._log(f"mkdir {full}")
-        
-        # Pass parent_item to refresh the specific node if possible
-        # For now, we simple refresh the parent node if it's expanded
-        t = RemoteOpThread(self.current_site, "mkdir", full)
-        
-        def on_done():
-            # Refresh the parent folder
-            if parent_item:
-                self._list_remote_dir(parent_path, parent_item)
-            else:
-                self._remote_refresh()
-                
-        t.op_done.connect(on_done)
-        t.op_failed.connect(lambda m: self._op_error("mkdir", m))
-        self._start_thread(t)
-
-    def _remote_delete(self, entry: RemoteEntry):
-        if not self._ensure_site():
-            return
-            
-        is_dir = entry.is_dir
-        msg = f"Delete '{entry.name}'"
-        if is_dir:
-            msg += " and all its contents?\n\nThis cannot be undone."
-        else:
-            msg += "?"
-            
-        reply = QMessageBox.question(
+        answer = QMessageBox.question(
             self,
-            "Confirm Delete",
-            msg,
+            "Remove Site",
+            f"Remove site '{site.name}'?\n\nThis will also close any open sessions using it.",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
-        if reply != QMessageBox.Yes:
+        if answer != QMessageBox.Yes:
             return
 
-        cmd = "remove_dir_recursive" if is_dir else "remove_file"
-            
-        self._log(f"Deleting {entry.path}")
-        t = RemoteOpThread(self.current_site, cmd, entry.path)
-        t.op_done.connect(self._remote_refresh)
-        t.op_failed.connect(lambda m: self._op_error("delete", m))
-        self._start_thread(t)
+        idx = self.sites.index(site)
+        self._close_sessions_for_site(site.name)
+        self.sites.pop(idx)
+        item = self.site_list.takeItem(idx)
+        if item:
+            del item
 
-    def _remote_rename(self, entry: RemoteEntry, new_name: str):
-        if not self._ensure_site():
+        if self.sites:
+            self.site_list.setCurrentRow(min(idx, len(self.sites) - 1))
+
+        self._save_sites()
+        self._refresh_session_selectors()
+        self._update_site_action_buttons()
+
+    def _check_connection(self):
+        site = self._selected_site()
+        if not site:
             return
-        parent = get_remote_parent(entry.path) or self.remote_panel.current_path
+        self._log(f"Checking {site.name}...")
+        thread = ConnectionCheckThread(site)
+        thread.check_completed.connect(self._on_check_completed)
+        self._start_thread(thread)
+
+    def _on_check_completed(self, results: list):
+        lines = [f"{r.name}: {'OK' if r.passed else 'FAIL'} - {r.message}" for r in results]
+        QMessageBox.information(self, "Connection Check", "\n".join(lines))
+
+    def _create_session_from_selection(self):
+        site = self._selected_site()
+        if not site:
+            QMessageBox.warning(self, "No Site Selected", "Select a site first.")
+            return
+        self._create_session(site)
+
+    def _create_session(self, site: SiteConfig):
+        session_id = str(uuid.uuid4())
+        container = QFrame()
+        container.setFrameShape(QFrame.StyledPanel)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        container.setStyleSheet("QFrame { border: 1px solid palette(mid); }")
+
+        header = QHBoxLayout()
+        session_label = QLabel(site.name)
+        session_label.setStyleSheet("font-weight: bold; padding: 0 4px;")
+        selector = QComboBox()
+        self._populate_site_selector(selector, site.name)
+        status_label = QLabel("Disconnected")
+        btn_connect = QPushButton("Connect")
+        btn_connect.clicked.connect(lambda: self._activate_and_run(session_id, self._connect_session))
+        btn_refresh = QPushButton("Refresh")
+        btn_refresh.clicked.connect(lambda: self._activate_and_run(session_id, self._remote_refresh))
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(lambda: self._close_session(session_id))
+        header.addWidget(session_label)
+        header.addWidget(selector, 1)
+        header.addWidget(btn_connect)
+        header.addWidget(btn_refresh)
+        header.addWidget(btn_close)
+        header.addWidget(status_label)
+        layout.addLayout(header)
+
+        panel = RemotePanel()
+        panel.set_session_context(session_id, site.name)
+        layout.addWidget(panel)
+
+        session = RemoteSession(session_id, site, panel, container, status_label, selector)
+        selector.currentIndexChanged.connect(lambda _idx, sid=session_id: self._switch_session_site(sid))
+        panel.tree.itemPressed.connect(lambda _item, _col, sid=session_id: self._set_active_session(sid))
+        panel.entry_activated.connect(lambda entry, sid=session_id: self._on_remote_entry_activated(sid, entry))
+        panel.request_expand.connect(lambda path, item, sid=session_id: self._remote_expand(sid, path, item))
+        panel.request_go_up.connect(lambda sid=session_id: self._activate_and_run(sid, self._remote_go_up))
+        panel.request_refresh.connect(lambda sid=session_id: self._activate_and_run(sid, self._remote_refresh))
+        panel.request_refresh_node.connect(
+            lambda path, item, sid=session_id: self._activate_and_run(sid, self._remote_refresh_node, path, item)
+        )
+        panel.request_mkdir.connect(lambda name, item, sid=session_id: self._activate_and_run(sid, self._remote_mkdir, name, item))
+        panel.request_delete.connect(lambda entry, sid=session_id: self._activate_and_run(sid, self._remote_delete, entry))
+        panel.request_rename.connect(
+            lambda entry, new_name, sid=session_id: self._activate_and_run(sid, self._remote_rename, entry, new_name)
+        )
+        panel.request_upload.connect(lambda sid=session_id: self._activate_and_run(sid, self._upload_files))
+        panel.request_upload_paths.connect(
+            lambda paths, item, sid=session_id: self._activate_and_run(sid, self._upload_paths, paths, item)
+        )
+        panel.request_download.connect(lambda entry, sid=session_id: self._activate_and_run(sid, self._download_entry, entry))
+        panel.request_remote_transfer.connect(
+            lambda src_sid, paths, item, dst_sid=session_id: self._remote_to_remote_drop(src_sid, dst_sid, paths, item)
+        )
+
+        self.sessions[session_id] = session
+        self._session_order.append(session_id)
+        self.remote_splitter.addWidget(container)
+        self._refresh_remote_area()
+        self._rebalance_remote_splitter()
+        self._set_active_session(session_id)
+        self._update_site_action_buttons()
+        self._log(f"Opened session for {site.name}")
+
+    def _remove_current_session(self):
+        session = self._current_session()
+        if session:
+            self._close_session(session.session_id)
+
+    def _close_session(self, session_id: str):
+        session = self.sessions.get(session_id)
+        if not session:
+            return
+        self.sessions.pop(session_id, None)
+        if session_id in self._session_order:
+            self._session_order.remove(session_id)
+        if self._active_session_id == session_id:
+            self._active_session_id = self._session_order[-1] if self._session_order else None
+        session.container.setParent(None)
+        session.container.deleteLater()
+        self._refresh_remote_area()
+        self._rebalance_remote_splitter()
+        self._update_active_session_styles()
+        self._update_site_action_buttons()
+
+    def _close_sessions_for_site(self, site_name: str):
+        session_ids = [sid for sid, session in self.sessions.items() if session.site.name == site_name]
+        for session_id in session_ids:
+            self._close_session(session_id)
+
+    def _switch_session_site(self, session_id: str):
+        session = self.sessions.get(session_id)
+        if not session:
+            return
+        selected_name = session.selector.currentData()
+        site = next((cfg for cfg in self.sites if cfg.name == selected_name), None)
+        if not site:
+            return
+        session.site = site
+        session.panel.set_session_context(session_id, site.name)
+        session.status_label.setText("Disconnected")
+        self._set_active_session(session_id)
+
+    def _connect_session(self, session_id: str):
+        session = self.sessions.get(session_id)
+        if not session:
+            return
+        site = session.site
+        if site.auth_method == "password" and not site.password:
+            pwd, ok = QInputDialog.getText(
+                self,
+                "Password Required",
+                f"Password for {site.username}@{site.host}:",
+            )
+            if not ok:
+                return
+            site.password = pwd
+        if not site.remote_root or not site.remote_root.strip():
+            site.remote_root = "/"
+        session.connected = True
+        session.status_label.setText(f"Connected: {site.name}")
+        session.panel.set_session_context(session_id, site.name)
+        self._list_remote_dir(session_id, site.remote_root)
+
+    def _list_remote_dir(self, session_id: str, path: str, parent_item: Optional[QTreeWidgetItem] = None):
+        session = self.sessions.get(session_id)
+        if not session:
+            return
+        thread = ListDirThread(session.site, path, parent_item)
+        thread.list_completed.connect(
+            lambda remote_path, entries, item, sid=session_id: self._on_list_completed(sid, remote_path, entries, item)
+        )
+        thread.list_failed.connect(lambda remote_path, msg, sid=session_id: self._on_list_failed(sid, remote_path, msg))
+        self._start_thread(thread)
+
+    def _on_list_completed(self, session_id: str, path: str, entries: list, parent_item: Optional[QTreeWidgetItem]):
+        session = self.sessions.get(session_id)
+        if not session:
+            return
+        if parent_item:
+            session.panel.populate_node(parent_item, entries)
+        else:
+            session.panel.set_path(path)
+            session.panel.set_root_entries(entries)
+
+    def _on_list_failed(self, session_id: str, path: str, msg: str):
+        session = self.sessions.get(session_id)
+        if session:
+            session.connected = False
+            session.status_label.setText("Disconnected")
+        self._log(f"List failed ({path}): {msg}")
+        QMessageBox.critical(self, "Error", msg)
+
+    def _on_remote_entry_activated(self, session_id: str, entry: RemoteEntry):
+        session = self.sessions.get(session_id)
+        if session:
+            self._log(f"[{session.site.name}] Activated: {entry.path}")
+
+    def _remote_expand(self, session_id: str, path: str, item: QTreeWidgetItem):
+        self._list_remote_dir(session_id, path, item)
+
+    def _remote_go_up(self, session_id: str):
+        session = self.sessions.get(session_id)
+        if not session:
+            return
+        parent = get_remote_parent(session.panel.current_path)
+        if parent:
+            ensure_in_sandbox(parent, session.site.remote_root)
+            self._list_remote_dir(session_id, parent)
+
+    def _remote_refresh(self, session_id: str):
+        session = self.sessions.get(session_id)
+        if session:
+            self._list_remote_dir(session_id, session.panel.current_path)
+
+    def _remote_refresh_node(self, session_id: str, path: str, item: QTreeWidgetItem):
+        self._list_remote_dir(session_id, path, item)
+
+    def _remote_mkdir(self, session_id: str, name: str, parent_item: QTreeWidgetItem = None):
+        session = self.sessions.get(session_id)
+        if not session:
+            return
+        parent_path = session.panel.get_current_target_dir()
+        if parent_item:
+            entry = parent_item.data(0, Qt.UserRole)
+            if entry:
+                parent_path = entry.path
+        full = join_remote_path(parent_path, name)
+        thread = RemoteOpThread(session.site, "mkdir", full)
+        thread.op_done.connect(lambda sid=session_id: self._remote_refresh(sid))
+        thread.op_failed.connect(lambda msg: self._op_error("mkdir", msg))
+        self._start_thread(thread)
+
+    def _remote_delete(self, session_id: str, entry: RemoteEntry):
+        session = self.sessions.get(session_id)
+        if not session:
+            return
+        cmd = "remove_dir_recursive" if entry.is_dir else "remove_file"
+        thread = RemoteOpThread(session.site, cmd, entry.path)
+        thread.op_done.connect(lambda sid=session_id: self._remote_refresh(sid))
+        thread.op_failed.connect(lambda msg: self._op_error("delete", msg))
+        self._start_thread(thread)
+
+    def _remote_rename(self, session_id: str, entry: RemoteEntry, new_name: str):
+        session = self.sessions.get(session_id)
+        if not session:
+            return
+        parent = get_remote_parent(entry.path) or session.panel.current_path
         new_path = join_remote_path(parent, new_name)
-        self._log(f"rename {entry.path} -> {new_path}")
-        t = RemoteOpThread(self.current_site, "rename", entry.path, new_path)
-        t.op_done.connect(self._remote_refresh)
-        t.op_failed.connect(lambda m: self._op_error("rename", m))
-        self._start_thread(t)
+        thread = RemoteOpThread(session.site, "rename", entry.path, new_path)
+        thread.op_done.connect(lambda sid=session_id: self._remote_refresh(sid))
+        thread.op_failed.connect(lambda msg: self._op_error("rename", msg))
+        self._start_thread(thread)
 
-    def _op_error(self, op: str, msg: str):
-        self._log(f"{op} failed: {msg}")
-        QMessageBox.critical(self, f"{op} Error", msg)
+    def _upload_files(self, session_id: str):
+        self._upload_paths(session_id, self.local_panel.get_selected_paths())
 
-    # ------------------------------------------------------------------
-    # Upload / Download
-    # ------------------------------------------------------------------
-
-    def _upload_files(self):
-        if not self._ensure_site() or not self.scheduler:
+    def _upload_paths(self, session_id: str, paths: list, target_item: QTreeWidgetItem = None):
+        session = self.sessions.get(session_id)
+        if not session or not paths:
             return
-
-        paths = self.local_panel.get_selected_paths()
-        if not paths:
-            # Fallback: open file dialog
-            paths, _ = QFileDialog.getOpenFileNames(self, "Select files to upload")
-        if not paths:
-            return
-
-        # Upload to where?
-        remote_dir = self.remote_panel.get_current_target_dir()
-        
-        for local_path in paths:
-            if os.path.isfile(local_path):
-                fname = os.path.basename(local_path)
-                remote_path = join_remote_path(remote_dir, fname)
-                size = os.path.getsize(local_path)
-                engine = self._resolve_transfer_engine(size)
-                task = TaskScheduler.create_upload_task(
-                    local_path,
-                    remote_path,
-                    size,
-                    engine=engine,
-                    auto_engine=False,
-                )
-                self.scheduler.add_task(task)
-                self._log(f"Queued upload [{engine}]: {fname} -> {remote_path}")
-            elif os.path.isdir(local_path):
-                self._enqueue_dir_upload(local_path, remote_dir)
-
-    def _upload_paths(self, paths: list, target_item: QTreeWidgetItem = None):
-        """Handle drag-drop upload from local panel."""
-        if not self._ensure_site() or not self.scheduler:
-            return
-        if not paths:
-            return
-
-        # Determine target remote directory
-        remote_dir = self.remote_panel.current_path
+        remote_dir = session.panel.current_path
         if target_item:
             entry = target_item.data(0, Qt.UserRole)
             if entry:
                 remote_dir = entry.path if entry.is_dir else get_remote_parent(entry.path)
-        
         for local_path in paths:
             if os.path.isfile(local_path):
                 fname = os.path.basename(local_path)
                 remote_path = join_remote_path(remote_dir, fname)
                 size = os.path.getsize(local_path)
-                engine = self._resolve_transfer_engine(size)
+                engine = self._resolve_transfer_engine(session.site, size)
                 task = TaskScheduler.create_upload_task(
                     local_path,
                     remote_path,
                     size,
                     engine=engine,
                     auto_engine=False,
+                    dst_site=session.site,
+                    dst_session_id=session.session_id,
+                    dst_display_name=session.site.name,
                 )
                 self.scheduler.add_task(task)
-                self._log(f"Queued upload (drag) [{engine}]: {fname} -> {remote_path}")
             elif os.path.isdir(local_path):
-                self._log(f"Queued upload folder (drag): {local_path}")
-                self._enqueue_dir_upload(local_path, remote_dir)
+                self._enqueue_dir_upload(session_id, local_path, remote_dir)
 
-    def _enqueue_dir_upload(self, local_dir: str, remote_parent: str):
-        """Create a single folder upload task for the entire directory."""
-        dir_name = os.path.basename(local_dir)
-        remote_dir = join_remote_path(remote_parent, dir_name)
-        
-        # Scan folder to get file count and total size
+    def _enqueue_dir_upload(self, session_id: str, local_dir: str, remote_parent: str):
+        session = self.sessions.get(session_id)
+        if not session:
+            return
+        remote_dir = join_remote_path(remote_parent, os.path.basename(local_dir))
         total_files, total_bytes = self._scan_local_dir(local_dir)
-        
-        if total_files > 0:
-            task = TaskScheduler.create_folder_upload_task(
-                local_dir, remote_dir, total_files, total_bytes
+        task = TaskScheduler.create_folder_upload_task(
+            local_dir,
+            remote_dir,
+            total_files,
+            total_bytes,
+            dst_site=session.site,
+            dst_session_id=session.session_id,
+            dst_display_name=session.site.name,
+        )
+        self.scheduler.add_task(task)
+
+    def _download_entry(self, session_id: str, entry: RemoteEntry):
+        local_dir = self.local_panel.get_current_dir()
+        if entry.is_dir:
+            self._enqueue_dir_download(session_id, entry.path, local_dir)
+            return
+        session = self.sessions.get(session_id)
+        if not session:
+            return
+        local_path = os.path.join(local_dir, entry.name)
+        engine = self._resolve_transfer_engine(session.site, entry.size)
+        task = TaskScheduler.create_download_task(
+            entry.path,
+            local_path,
+            entry.size,
+            engine=engine,
+            auto_engine=False,
+            src_site=session.site,
+            src_session_id=session.session_id,
+            src_display_name=session.site.name,
+        )
+        self.scheduler.add_task(task)
+
+    def _download_paths(self, src_session_id: str, remote_paths: list, target_local_dir: str):
+        session = self.sessions.get(src_session_id) if src_session_id else self._current_session()
+        if not session:
+            return
+        for remote_path in remote_paths:
+            entry = self._find_remote_entry_by_path(session.panel, remote_path)
+            name = entry.name if entry else os.path.basename(remote_path)
+            size = entry.size if entry else 0
+            if entry and entry.is_dir:
+                self._enqueue_dir_download(session.session_id, remote_path, target_local_dir)
+                continue
+            task = TaskScheduler.create_download_task(
+                remote_path,
+                os.path.join(target_local_dir, name),
+                size,
+                engine=self._resolve_transfer_engine(session.site, size),
+                auto_engine=False,
+                src_site=session.site,
+                src_session_id=session.session_id,
+                src_display_name=session.site.name,
             )
             self.scheduler.add_task(task)
-            self._log(f"Queued folder upload: {dir_name} ({total_files} files, {self._format_size(total_bytes)})")
-        else:
-            # Empty folder - just create mkdir task
-            task = TaskScheduler.create_mkdir_task(remote_dir)
+
+    def _enqueue_dir_download(self, session_id: str, remote_dir: str, local_parent: str):
+        session = self.sessions.get(session_id)
+        if not session:
+            return
+        thread = ScanRemoteDirThread(session.site, remote_dir)
+
+        def on_scanned(path: str, total_files: int, total_bytes: int, sid=session_id):
+            session_obj = self.sessions.get(sid)
+            if not session_obj:
+                return
+            local_dir = os.path.join(local_parent, os.path.basename(path.rstrip("/")))
+            task = TaskScheduler.create_folder_download_task(
+                path,
+                local_dir,
+                max(1, total_files),
+                total_bytes,
+                src_site=session_obj.site,
+                src_session_id=session_obj.session_id,
+                src_display_name=session_obj.site.name,
+            )
             self.scheduler.add_task(task)
 
-    def _scan_local_dir(self, path: str) -> tuple:
-        """Recursively count files and total bytes in a local directory."""
+        thread.scan_completed.connect(on_scanned)
+        thread.scan_failed.connect(lambda path, msg: self._log(f"Download scan failed ({path}): {msg}"))
+        self._start_thread(thread)
+
+    def _remote_to_remote_drop(self, src_session_id: str, dst_session_id: str, remote_paths: list[str], target_item: QTreeWidgetItem = None):
+        src_session = self.sessions.get(src_session_id)
+        dst_session = self.sessions.get(dst_session_id)
+        if not src_session or not dst_session:
+            return
+        dst_dir = dst_session.panel.current_path
+        if target_item:
+            entry = target_item.data(0, Qt.UserRole)
+            if entry:
+                dst_dir = entry.path if entry.is_dir else get_remote_parent(entry.path)
+        for remote_path in remote_paths:
+            entry = self._find_remote_entry_by_path(src_session.panel, remote_path)
+            name = entry.name if entry else os.path.basename(remote_path)
+            dst_path = join_remote_path(dst_dir, name)
+            if entry and entry.is_dir:
+                self._enqueue_remote_dir_transfer(src_session, dst_session, entry.path, dst_path)
+                continue
+            size = entry.size if entry else 0
+            task = TaskScheduler.create_remote_to_remote_task(
+                remote_path,
+                dst_path,
+                size,
+                src_site=src_session.site,
+                dst_site=dst_session.site,
+                src_session_id=src_session.session_id,
+                dst_session_id=dst_session.session_id,
+            )
+            self.scheduler.add_task(task)
+
+    def _enqueue_remote_dir_transfer(self, src_session: RemoteSession, dst_session: RemoteSession, src_dir: str, dst_dir: str):
+        thread = ScanRemoteDirThread(src_session.site, src_dir)
+
+        def on_scanned(path: str, total_files: int, total_bytes: int):
+            task = TaskScheduler.create_folder_remote_to_remote_task(
+                path,
+                dst_dir,
+                max(1, total_files),
+                total_bytes,
+                src_site=src_session.site,
+                dst_site=dst_session.site,
+                src_session_id=src_session.session_id,
+                dst_session_id=dst_session.session_id,
+            )
+            self.scheduler.add_task(task)
+
+        thread.scan_completed.connect(on_scanned)
+        thread.scan_failed.connect(lambda path, msg: self._log(f"Remote transfer scan failed ({path}): {msg}"))
+        self._start_thread(thread)
+
+    def _scan_local_dir(self, path: str) -> tuple[int, int]:
         total_files = 0
         total_bytes = 0
         for name in os.listdir(path):
@@ -842,147 +802,8 @@ class MainWindow(QMainWindow):
                 total_bytes += sub_bytes
         return total_files, total_bytes
 
-    def _format_size(self, size: int) -> str:
-        """Format size in human readable format."""
-        for unit in ["Byte", "KB", "MB", "GB"]:
-            if size < 1024:
-                return f"{size:.1f} {unit}"
-            size /= 1024
-        return f"{size:.1f} TB"
-
-    def _download_entry(self, entry: RemoteEntry):
-        if not self._ensure_site() or not self.scheduler:
-            return
-
-        local_dir = self.local_panel.get_current_dir()
-        if entry.is_dir:
-            self._log(f"Queued download folder: {entry.path}")
-            self._enqueue_dir_download(entry.path, local_dir)
-        else:
-            local_path = os.path.join(local_dir, entry.name)
-            engine = self._resolve_transfer_engine(entry.size)
-            task = TaskScheduler.create_download_task(
-                entry.path,
-                local_path,
-                entry.size,
-                engine=engine,
-                auto_engine=False,
-            )
-            self.scheduler.add_task(task)
-            self._log(f"Queued download [{engine}]: {entry.name} -> {local_path}")
-
-    def _download_paths(self, remote_paths: list, target_local_dir: str):
-        """Handle drag-drop download from remote panel."""
-        if not self._ensure_site() or not self.scheduler:
-            return
-        if not remote_paths:
-            return
-
-        local_dir = target_local_dir or self.local_panel.get_current_dir()
-
-        for remote_path in remote_paths:
-            entry = self._find_remote_entry_by_path(remote_path)
-            if entry:
-                if entry.is_dir:
-                    self._log(f"Queued download folder (drag): {entry.path}")
-                    self._enqueue_dir_download(entry.path, local_dir)
-                else:
-                    local_path = os.path.join(local_dir, entry.name)
-                    engine = self._resolve_transfer_engine(entry.size)
-                    task = TaskScheduler.create_download_task(
-                        entry.path,
-                        local_path,
-                        entry.size,
-                        engine=engine,
-                        auto_engine=False,
-                    )
-                    self.scheduler.add_task(task)
-                    self._log(
-                        f"Queued download (drag) [{engine}]: {entry.name} -> {local_path}"
-                    )
-            else:
-                # Entry not found in cache, create task with unknown size
-                name = os.path.basename(remote_path)
-                local_path = os.path.join(local_dir, name)
-                engine = self._resolve_transfer_engine(0)
-                task = TaskScheduler.create_download_task(
-                    remote_path,
-                    local_path,
-                    0,
-                    engine=engine,
-                    auto_engine=False,
-                )
-                self.scheduler.add_task(task)
-                self._log(f"Queued download (drag) [{engine}]: {name} -> {local_path}")
-
-    def _enqueue_dir_download(self, remote_dir: str, local_parent: str):
-        """Create a single folder download task for the remote directory."""
-        t = ScanRemoteDirThread(self.current_site, remote_dir)
-
-        def on_scanned(path: str, total_files: int, total_bytes: int):
-            dir_name = os.path.basename(path)
-            local_dir = os.path.join(local_parent, dir_name)
-
-            task = TaskScheduler.create_folder_download_task(
-                path, local_dir, max(1, total_files), total_bytes
-            )
-            self.scheduler.add_task(task)
-            self._log(
-                f"Queued folder download: {dir_name} "
-                f"({total_files} files, {self._format_size(total_bytes)})"
-            )
-
-        t.scan_completed.connect(on_scanned)
-        t.scan_failed.connect(lambda p, m: self._log(f"Download scan failed ({p}): {m}"))
-        self._start_thread(t)
-
-    # ------------------------------------------------------------------
-    # Task center
-    # ------------------------------------------------------------------
-
-    def _refresh_tasks(self):
-        if self.scheduler:
-            self.task_center.set_tasks(self.scheduler.get_all_tasks())
-
-    def cancel_task(self, task_id: str):
-        if self.scheduler and self.scheduler.cancel_task(task_id):
-            self._log(f"Canceled task {task_id[:8]}")
-
-    def pause_task(self, task_id: str):
-        if self.scheduler and self.scheduler.pause_task(task_id):
-            self._log(f"Paused task {task_id[:8]}")
-
-    def resume_task(self, task_id: str):
-        if self.scheduler and self.scheduler.resume_task(task_id):
-            self._log(f"Resumed task {task_id[:8]}")
-
-    def restart_task(self, task_id: str):
-        if self.scheduler and self.scheduler.restart_task(task_id):
-            self._log(f"Restarted task {task_id[:8]}")
-
-    def clear_finished_tasks(self):
-        if not self.scheduler:
-            return
-        with self.scheduler.task_lock:
-            ids = [tid for tid, t in self.scheduler.tasks.items() if t.is_finished]
-            for tid in ids:
-                del self.scheduler.tasks[tid]
-        self._log(f"Cleared {len(ids)} finished tasks")
-        self._refresh_tasks()
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    def _ensure_site(self) -> bool:
-        if not self.current_site:
-            QMessageBox.warning(self, "No Site", "Select a site first.")
-            return False
-        return True
-
-    def _find_remote_entry_by_path(self, remote_path: str) -> Optional[RemoteEntry]:
-        """Find a RemoteEntry in the remote tree by full path."""
-        tree = self.remote_panel.tree
+    def _find_remote_entry_by_path(self, panel: RemotePanel, remote_path: str) -> Optional[RemoteEntry]:
+        tree = panel.tree
 
         def walk(item: QTreeWidgetItem) -> Optional[RemoteEntry]:
             entry = item.data(0, Qt.UserRole)
@@ -1001,65 +822,122 @@ class MainWindow(QMainWindow):
                 return found
         return None
 
-    def _log(self, msg: str):
-        self.log_text.append(msg)
-        self.logger.info(msg)
+    def _current_session(self) -> Optional[RemoteSession]:
+        if self._active_session_id:
+            return self.sessions.get(self._active_session_id)
+        if self._session_order:
+            return self.sessions.get(self._session_order[-1])
+        return None
 
-    def _resolve_transfer_engine(self, file_size: int) -> str:
-        """Resolve transfer engine from task override + site default + parallel policy."""
-        if not self.current_site:
-            return "sftp"
+    def _set_active_session(self, session_id: str):
+        if session_id not in self.sessions:
+            return
+        self._active_session_id = session_id
+        self._update_active_session_styles()
+
+    def _update_active_session_styles(self):
+        for session_id, session in self.sessions.items():
+            if session_id == self._active_session_id:
+                session.container.setStyleSheet(
+                    "QFrame { border: 2px solid palette(highlight); border-radius: 4px; }"
+                )
+            else:
+                session.container.setStyleSheet("QFrame { border: 1px solid palette(mid); border-radius: 4px; }")
+
+    def _refresh_remote_area(self):
+        has_sessions = bool(self.sessions)
+        self.remote_placeholder.setVisible(not has_sessions)
+        self.remote_splitter.setVisible(has_sessions)
+
+    def _rebalance_remote_splitter(self):
+        count = self.remote_splitter.count()
+        if count <= 0:
+            return
+        total = max(1200, self.remote_splitter.size().width(), count * 320)
+        size = max(280, total // count)
+        self.remote_splitter.setSizes([size] * count)
+
+    def _activate_and_run(self, session_id: str, func, *args):
+        self._set_active_session(session_id)
+        func(session_id, *args)
+
+    def _refresh_tasks(self):
+        self.task_center.set_tasks(self.scheduler.get_all_tasks())
+
+    def cancel_task(self, task_id: str):
+        self.scheduler.cancel_task(task_id)
+
+    def pause_task(self, task_id: str):
+        self.scheduler.pause_task(task_id)
+
+    def resume_task(self, task_id: str):
+        self.scheduler.resume_task(task_id)
+
+    def restart_task(self, task_id: str):
+        self.scheduler.restart_task(task_id)
+
+    def clear_finished_tasks(self):
+        with self.scheduler.task_lock:
+            ids = [tid for tid, task in self.scheduler.tasks.items() if task.is_finished]
+            for tid in ids:
+                del self.scheduler.tasks[tid]
+
+    def _resolve_transfer_engine(self, site: SiteConfig, file_size: int) -> str:
         override = self.transfer_override_combo.currentData()
-        base_protocol = override if override in ("sftp", "scp") else self.current_site.default_transfer_protocol
-        if base_protocol not in ("sftp", "scp"):
-            base_protocol = "sftp"
-
-        if (
-            base_protocol != "scp"
-            and self.scheduler
-            and file_size >= self.scheduler.parallel_threshold
-        ):
+        base_protocol = override if override in ("sftp", "scp") else site.default_transfer_protocol
+        if base_protocol != "scp" and file_size >= self.scheduler.parallel_threshold:
             return "parallel"
         return base_protocol
 
+    def _populate_site_selector(self, selector: QComboBox, current_name: Optional[str] = None):
+        selector.blockSignals(True)
+        selector.clear()
+        for site in self.sites:
+            selector.addItem(site.name, site.name)
+        if current_name:
+            idx = selector.findData(current_name)
+            if idx >= 0:
+                selector.setCurrentIndex(idx)
+        selector.blockSignals(False)
+
+    def _refresh_session_selectors(self):
+        for session in self.sessions.values():
+            current_name = session.selector.currentData() or session.site.name
+            self._populate_site_selector(session.selector, current_name)
+
     def _start_thread(self, thread: QThread):
-        """Keep a reference and auto-cleanup."""
         self._bg_threads.append(thread)
         thread.finished.connect(lambda: self._bg_threads.remove(thread) if thread in self._bg_threads else None)
         thread.start()
 
-    def closeEvent(self, event):
-        self._task_timer.stop()
-        if self.scheduler:
-            self.scheduler.stop()
-        # Save sites on exit
-        self._save_sites()
-        event.accept()
+    def _op_error(self, op: str, msg: str):
+        self._log(f"{op} failed: {msg}")
+        QMessageBox.critical(self, f"{op} Error", msg)
 
     def _load_saved_sites(self):
-        """Load saved sites from persistent storage."""
         saved = self.site_store.load()
-        if saved:
-            self.sites = saved
-            for site in saved:
-                self.site_list.addItem(site.name)
-            self.site_list.setCurrentRow(0)
-            self.current_site = saved[0]
-            self._update_site_action_buttons()
-            self._log(f"Loaded {len(saved)} saved sites")
-        else:
-            self._update_site_action_buttons()
-            self._log("No saved sites found. Click 'Add Site' to create your first connection.")
-            self.statusBar().showMessage("No saved sites. Add a site to get started.", 5000)
+        self.sites = saved
+        for site in saved:
+            self.site_list.addItem(site.name)
+        self._update_site_action_buttons()
 
     def _save_sites(self):
-        """Save sites to persistent storage."""
         self.site_store.save(self.sites)
-        self._log(f"Saved {len(self.sites)} sites")
 
     def _update_site_action_buttons(self):
-        """Enable/disable site actions based on whether a site is selected."""
-        has_site = self.current_site is not None
+        has_site = self._selected_site() is not None
         self.btn_edit_site.setEnabled(has_site)
+        self.btn_remove_site.setEnabled(has_site)
         self.btn_check_connection.setEnabled(has_site)
-        self.btn_connect_site.setEnabled(has_site)
+        self.btn_new_session.setEnabled(has_site)
+        self.btn_remove_session.setEnabled(bool(self.sessions))
+
+    def _log(self, msg: str):
+        self.log_text.append(msg)
+        self.logger.info(msg)
+
+    def closeEvent(self, event):
+        self._task_timer.stop()
+        self.scheduler.stop()
+        self._save_sites()
+        event.accept()

@@ -1,4 +1,5 @@
 """Local file system panel using QFileSystemModel."""
+import json
 import os
 import sys
 from pathlib import Path
@@ -105,7 +106,7 @@ class LocalPanel(QWidget):
 
     file_selected = Signal(str)  # full path of selected file
     dir_changed = Signal(str)  # current directory changed
-    files_dropped = Signal(list, str)  # remote paths, target local directory
+    files_dropped = Signal(str, list, str)  # source session id, remote paths, target local directory
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -271,9 +272,11 @@ class LocalPanel(QWidget):
     def dropEvent(self, event):
         if event.mimeData().hasFormat("application/x-sshferry-remote"):
             data = event.mimeData().data("application/x-sshferry-remote")
-            paths = data.data().decode("utf-8").split("\n")
+            payload = json.loads(data.data().decode("utf-8"))
+            source_session_id = payload.get("session_id", "")
+            paths = payload.get("paths", [])
             target_dir = self._target_dir_from_pos(event.pos())
-            self.files_dropped.emit(paths, target_dir)
+            self.files_dropped.emit(source_session_id, paths, target_dir)
             self._stop_drag_animation()
             event.acceptProposedAction()
 

@@ -1,8 +1,22 @@
 @echo off
-REM Activate sshferry conda environment and run application
+setlocal
 
-REM Initialize conda for this shell session
-REM Try common conda installation paths
+set "ROOT_DIR=%~dp0"
+set "PYTHON_EXE="
+
+if exist "%ROOT_DIR%.venv_compat\Scripts\python.exe" (
+    set "PYTHON_EXE=%ROOT_DIR%.venv_compat\Scripts\python.exe"
+) else if exist "%ROOT_DIR%.venv\Scripts\python.exe" (
+    set "PYTHON_EXE=%ROOT_DIR%.venv\Scripts\python.exe"
+)
+
+if defined PYTHON_EXE (
+    echo Running SSHFerry with %PYTHON_EXE%
+    "%PYTHON_EXE%" -m src.app.main
+    exit /b %errorlevel%
+)
+
+REM Fallback to a conda environment when local virtualenvs are unavailable.
 if exist "D:\Anaconda3\Scripts\activate.bat" (
     call "D:\Anaconda3\Scripts\activate.bat" "D:\Anaconda3"
 ) else if exist "%USERPROFILE%\anaconda3\Scripts\activate.bat" (
@@ -14,21 +28,22 @@ if exist "D:\Anaconda3\Scripts\activate.bat" (
 ) else if exist "C:\ProgramData\miniconda3\Scripts\activate.bat" (
     call "C:\ProgramData\miniconda3\Scripts\activate.bat" "C:\ProgramData\miniconda3"
 ) else (
-    echo Error: Could not find conda installation
-    echo Please ensure Anaconda or Miniconda is installed
+    echo Error: could not find a usable Python environment.
+    echo Expected one of:
+    echo   %ROOT_DIR%.venv_compat\Scripts\python.exe
+    echo   %ROOT_DIR%.venv\Scripts\python.exe
+    echo   a conda installation with environment "sshferry"
     pause
     exit /b 1
 )
 
-echo Activating sshferry conda environment...
+echo Activating conda environment: sshferry
 call conda activate sshferry
-
 if errorlevel 1 (
-    echo Error: Failed to activate sshferry environment
-    echo Please run: conda create -n sshferry python=3.11 -y
+    echo Error: failed to activate conda environment "sshferry".
     pause
     exit /b 1
 )
 
-echo Running SSHFerry...
 python -m src.app.main
+exit /b %errorlevel%

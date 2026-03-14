@@ -66,3 +66,43 @@ def test_remote_root_readable_uses_context_manager_on_error(monkeypatch):
     assert result.passed is False
     assert "boom" in result.message
     assert events == ["enter", "exit"]
+
+
+def test_run_all_checks_reuses_single_engine_connection(monkeypatch):
+    events: list[str] = []
+
+    class FakeEngine:
+        def __init__(self, _site_config):
+            self.sftp_client = object()
+
+        def connect(self):
+            events.append("connect")
+
+        def disconnect(self):
+            events.append("disconnect")
+
+        def is_connected(self) -> bool:
+            return True
+
+        def check_path_readable(self, _path: str) -> bool:
+            events.append("readable")
+            return True
+
+        def check_path_writable(self, _path: str) -> bool:
+            events.append("writable")
+            return True
+
+    monkeypatch.setattr("src.services.connection_checker.SftpEngine", FakeEngine)
+
+    checker = ConnectionChecker(_site())
+    results = checker.run_all_checks()
+
+    assert [result.name for result in results] == [
+        "TCP Connection",
+        "SSH Handshake",
+        "SFTP Subsystem",
+        "Remote Root Readable",
+        "Remote Root Writable",
+    ]
+    assert all(result.passed for result in results[1:])
+    assert events == ["connect", "readable", "writable", "disconnect"]

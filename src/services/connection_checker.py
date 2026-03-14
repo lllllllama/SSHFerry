@@ -44,21 +44,48 @@ class ConnectionChecker:
         if not self.results[-1].passed:
             return self.results
 
-        # Check 2: SSH handshake
-        self.results.append(self._check_ssh())
-        if not self.results[-1].passed:
-            return self.results
+        engine = SftpEngine(self.site_config)
+        try:
+            engine.connect()
 
-        # Check 3: SFTP subsystem
-        self.results.append(self._check_sftp())
-        if not self.results[-1].passed:
-            return self.results
+            # Check 2: SSH handshake
+            self.results.append(self._check_ssh(engine))
+            if not self.results[-1].passed:
+                return self.results
 
-        # Check 4: Remote root readable
-        self.results.append(self._check_remote_root_readable())
+            # Check 3: SFTP subsystem
+            self.results.append(self._check_sftp(engine))
+            if not self.results[-1].passed:
+                return self.results
 
-        # Check 5: Remote root writable
-        self.results.append(self._check_remote_root_writable())
+            # Check 4: Remote root readable
+            self.results.append(self._check_remote_root_readable(engine))
+
+            # Check 5: Remote root writable
+            self.results.append(self._check_remote_root_writable(engine))
+        except SSHFerryError as e:
+            self.results.append(
+                CheckResult(
+                    name="SSH Handshake",
+                    passed=False,
+                    message=f"SSH error: {e.message}",
+                    error=e,
+                )
+            )
+        except Exception as e:
+            self.results.append(
+                CheckResult(
+                    name="SSH Handshake",
+                    passed=False,
+                    message=f"Unexpected error: {e}",
+                    error=e,
+                )
+            )
+        finally:
+            try:
+                engine.disconnect()
+            except Exception:
+                pass
 
         return self.results
 
@@ -84,23 +111,34 @@ class ConnectionChecker:
                 error=e
             )
 
-    def _check_ssh(self) -> CheckResult:
+    def _check_ssh(self, engine: Optional[SftpEngine] = None) -> CheckResult:
         """Check if SSH handshake succeeds."""
         try:
-            with SftpEngine(self.site_config) as engine:
-                # Just check if connected
+            if engine is not None:
                 if engine.is_connected():
                     return CheckResult(
                         name="SSH Handshake",
                         passed=True,
                         message="SSH authentication successful"
                     )
-                else:
+                return CheckResult(
+                    name="SSH Handshake",
+                    passed=False,
+                    message="Failed to establish SSH connection"
+                )
+
+            with SftpEngine(self.site_config) as local_engine:
+                if local_engine.is_connected():
                     return CheckResult(
                         name="SSH Handshake",
-                        passed=False,
-                        message="Failed to establish SSH connection"
+                        passed=True,
+                        message="SSH authentication successful"
                     )
+                return CheckResult(
+                    name="SSH Handshake",
+                    passed=False,
+                    message="Failed to establish SSH connection"
+                )
         except SSHFerryError as e:
             return CheckResult(
                 name="SSH Handshake",
@@ -116,22 +154,34 @@ class ConnectionChecker:
                 error=e
             )
 
-    def _check_sftp(self) -> CheckResult:
+    def _check_sftp(self, engine: Optional[SftpEngine] = None) -> CheckResult:
         """Check if SFTP subsystem is available."""
         try:
-            with SftpEngine(self.site_config) as engine:
+            if engine is not None:
                 if engine.sftp_client:
                     return CheckResult(
                         name="SFTP Subsystem",
                         passed=True,
                         message="SFTP subsystem is available"
                     )
-                else:
+                return CheckResult(
+                    name="SFTP Subsystem",
+                    passed=False,
+                    message="SFTP subsystem not available"
+                )
+
+            with SftpEngine(self.site_config) as local_engine:
+                if local_engine.sftp_client:
                     return CheckResult(
                         name="SFTP Subsystem",
-                        passed=False,
-                        message="SFTP subsystem not available"
+                        passed=True,
+                        message="SFTP subsystem is available"
                     )
+                return CheckResult(
+                    name="SFTP Subsystem",
+                    passed=False,
+                    message="SFTP subsystem not available"
+                )
         except Exception as e:
             return CheckResult(
                 name="SFTP Subsystem",
@@ -140,24 +190,26 @@ class ConnectionChecker:
                 error=e
             )
 
-    def _check_remote_root_readable(self) -> CheckResult:
+    def _check_remote_root_readable(self, engine: Optional[SftpEngine] = None) -> CheckResult:
         """Check if remote_root directory is readable."""
         try:
-            with SftpEngine(self.site_config) as engine:
+            if engine is not None:
                 is_readable = engine.check_path_readable(self.site_config.remote_root)
+            else:
+                with SftpEngine(self.site_config) as local_engine:
+                    is_readable = local_engine.check_path_readable(self.site_config.remote_root)
 
-                if is_readable:
-                    return CheckResult(
-                        name="Remote Root Readable",
-                        passed=True,
-                        message=f"Can read {self.site_config.remote_root}"
-                    )
-                else:
-                    return CheckResult(
-                        name="Remote Root Readable",
-                        passed=False,
-                        message=f"Cannot read {self.site_config.remote_root}"
-                    )
+            if is_readable:
+                return CheckResult(
+                    name="Remote Root Readable",
+                    passed=True,
+                    message=f"Can read {self.site_config.remote_root}"
+                )
+            return CheckResult(
+                name="Remote Root Readable",
+                passed=False,
+                message=f"Cannot read {self.site_config.remote_root}"
+            )
         except Exception as e:
             return CheckResult(
                 name="Remote Root Readable",
@@ -166,24 +218,26 @@ class ConnectionChecker:
                 error=e
             )
 
-    def _check_remote_root_writable(self) -> CheckResult:
+    def _check_remote_root_writable(self, engine: Optional[SftpEngine] = None) -> CheckResult:
         """Check if remote_root directory is writable."""
         try:
-            with SftpEngine(self.site_config) as engine:
+            if engine is not None:
                 is_writable = engine.check_path_writable(self.site_config.remote_root)
+            else:
+                with SftpEngine(self.site_config) as local_engine:
+                    is_writable = local_engine.check_path_writable(self.site_config.remote_root)
 
-                if is_writable:
-                    return CheckResult(
-                        name="Remote Root Writable",
-                        passed=True,
-                        message=f"Can write to {self.site_config.remote_root}"
-                    )
-                else:
-                    return CheckResult(
-                        name="Remote Root Writable",
-                        passed=False,
-                        message=f"Cannot write to {self.site_config.remote_root}"
-                    )
+            if is_writable:
+                return CheckResult(
+                    name="Remote Root Writable",
+                    passed=True,
+                    message=f"Can write to {self.site_config.remote_root}"
+                )
+            return CheckResult(
+                name="Remote Root Writable",
+                passed=False,
+                message=f"Cannot write to {self.site_config.remote_root}"
+            )
         except Exception as e:
             return CheckResult(
                 name="Remote Root Writable",

@@ -2,7 +2,7 @@
 
 [中文](README_zh.md) | English
 
-SSHFerry is a desktop GUI for SSH/SFTP file operations, built with Python + PySide6.
+SSHFerry is a desktop GUI for SSH/SFTP/SCP file operations, built with Python + PySide6.
 It focuses on three goals: **safe remote operations**, **practical transfer behavior**, and **clear task visibility**.
 
 ## 🚀 Highlights
@@ -13,12 +13,14 @@ It focuses on three goals: **safe remote operations**, **practical transfer beha
 - 🧪 Built-in connection checker (TCP/SSH/SFTP/read/write)
 - 📊 Task center with pause/resume/cancel/restart
 - ⚡ High-throughput parallel chunk transfer for large files
+- 🪟 Multi-session remote workspace in one window
+- 🔁 Remote-to-remote transfer by dragging between remote sessions
 
 ## 📌 Current Scope
 
 - Runtime: Python `3.11+`
 - GUI: `PySide6`
-- Protocol: `Paramiko` (SSH/SFTP)
+- Protocols/Libraries: `Paramiko` (SSH/SFTP) + `scp`
 - Engines:
   - `sftp` (default)
   - `parallel` (native chunked transfer for large files)
@@ -31,11 +33,14 @@ It focuses on three goals: **safe remote operations**, **practical transfer beha
 1. Add a site (manual form or paste SSH command).
 2. Set `remote_root` to a dedicated project directory whenever possible (recommended). If left empty, it defaults to `/` (full filesystem scope).
 3. Run connection check.
-4. Connect and browse remote tree.
+4. Open one or more remote sessions and connect.
 5. Upload/download files or folders.
    - Site-level default transfer protocol can be set to `sftp` or `scp`.
    - Per-task override is available from the main window (`Auto/SFTP/SCP`).
-6. Monitor and control tasks in Task Center.
+6. Drag between remote panels to create remote-to-remote transfer tasks.
+   - File tasks are queued immediately.
+   - Folder tasks are scanned first so total bytes/file counts are known.
+7. Monitor and control tasks in Task Center.
 
 ### First-run note
 
@@ -185,7 +190,8 @@ python -c "from src.shared.errors import ErrorCode; from src.shared.models impor
 2. Upload the same file twice; verify second attempt is `skipped`.
 3. Interrupt a large transfer, retry, and verify resume behavior.
 4. Drag remote files into local panel; verify download tasks are created.
-5. Attempt an operation outside sandbox; verify it is blocked.
+5. Open two remote sessions and drag file/folder between them; verify remote-to-remote tasks are created.
+6. Attempt an operation outside sandbox; verify it is blocked.
 
 ## ⚡ Large File Performance
 
@@ -207,6 +213,15 @@ python -c "from src.shared.errors import ErrorCode; from src.shared.models impor
 - SCP default semantics are overwrite-oriented (no native resume).
 - If an SCP transfer fails, SSHFerry automatically falls back once to SFTP (`fallback=scp_to_sftp`).
 - On fallback, existing SFTP resume/skip behavior applies.
+
+### Remote-to-remote behavior
+
+- Remote-to-remote tasks are created when dragging from one remote session into another.
+- For smaller files, SSHFerry first tries direct remote copy by running `scp` on the source host.
+- Direct remote copy currently requires destination key authentication (`key_path`).
+- If direct copy fails, SSHFerry falls back to a relay path through the running app process.
+- Large files skip direct copy and use parallel bridge transfer by default.
+- Directory transfer follows the same idea: try direct recursive `scp`, then fall back to relay copy.
 
 ### Why fallback is faster now
 
@@ -254,7 +269,7 @@ python tools/benchmark_transfer.py --site "<your-site-name>" --size-mb 512 --ite
 src/
   app/        # Entry point
   core/       # Scheduler and task logic
-  engines/    # SFTP / parallel SFTP
+  engines/    # SFTP / SCP / parallel SFTP / remote-to-remote transfer
   services/   # Site storage, connection checks, metrics
   shared/     # Models, errors, path sandboxing, logging
   ui/         # Main window and panels
@@ -264,6 +279,9 @@ tests/        # Pytest test suite
 
 ## 📝 Notes
 
-- Passwords are runtime-only and not persisted by `SiteStore`.
+- Passwords are not persisted by default. If you enable `Save password to sites.json` for a password-based site, it will be stored locally in the site store on this machine.
+- Site storage path:
+  - Windows: `%USERPROFILE%\AppData\Local\SSHFerry\sites.json`
+  - Linux/macOS: `~/.config/sshferry/sites.json`
 - Current positioning: personal and educational use.
 - For safer operations, prefer least-privilege accounts and a non-root `remote_root`.

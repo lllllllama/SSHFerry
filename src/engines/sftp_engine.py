@@ -3,6 +3,8 @@ import builtins
 import logging
 import os
 import shlex
+import socket
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -54,51 +56,76 @@ class SftpEngine:
             NetworkError: If connection fails
             SSHFerryError: For other connection issues
         """
-        try:
-            self.ssh_client = paramiko.SSHClient()
-            strict_hostkey = os.getenv("SSHFERRY_STRICT_HOSTKEY", "").strip().lower() in (
-                "1",
-                "true",
-                "yes",
-                "on",
-            )
-            if strict_hostkey:
-                self.ssh_client.load_system_host_keys()
-                self.ssh_client.set_missing_host_key_policy(paramiko.RejectPolicy())
-            else:
-                self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        strict_hostkey = os.getenv("SSHFERRY_STRICT_HOSTKEY", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        connect_kwargs = {
+            "hostname": self.site_config.host,
+            "port": self.site_config.port,
+            "username": self.site_config.username,
+            "timeout": 10,
+            "banner_timeout": 20,
+            "auth_timeout": 20,
+        }
 
-            # Prepare connection kwargs
-            connect_kwargs = {
-                'hostname': self.site_config.host,
-                'port': self.site_config.port,
-                'username': self.site_config.username,
-                'timeout': 10,
-            }
+        if self.site_config.auth_method == "password":
+            connect_kwargs["password"] = self.site_config.password
+        elif self.site_config.auth_method == "key":
+            if self.site_config.key_path:
+                connect_kwargs["key_filename"] = self.site_config.key_path
+            if self.site_config.key_passphrase:
+                connect_kwargs["passphrase"] = self.site_config.key_passphrase
 
-            # Add authentication
-            if self.site_config.auth_method == 'password':
-                connect_kwargs['password'] = self.site_config.password
-            elif self.site_config.auth_method == 'key':
-                if self.site_config.key_path:
-                    connect_kwargs['key_filename'] = self.site_config.key_path
-                if self.site_config.key_passphrase:
-                    connect_kwargs['passphrase'] = self.site_config.key_passphrase
+        attempts = 2
+        retry_delay_seconds = 1.0
+        last_error: Exception | None = None
 
-            self.ssh_client.connect(**connect_kwargs)
-            self.sftp_client = self.ssh_client.open_sftp()
-            self._connected = True
+        for attempt in range(1, attempts + 1):
+            self.disconnect()
+            try:
+                self.ssh_client = paramiko.SSHClient()
+                if strict_hostkey:
+                    self.ssh_client.load_system_host_keys()
+                    self.ssh_client.set_missing_host_key_policy(paramiko.RejectPolicy())
+                else:
+                    self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-            self.logger.info(
-                f"Connected to {self.site_config.host}:{self.site_config.port}"
-            )
+                self.ssh_client.connect(**connect_kwargs)
+                self.sftp_client = self.ssh_client.open_sftp()
+                self._connected = True
+                self.logger.info(
+                    f"Connected to {self.site_config.host}:{self.site_config.port}"
+                )
+                return
+            except paramiko.AuthenticationException as e:
+                self.disconnect()
+                raise AuthenticationError(f"Authentication failed: {e}")
+            except (paramiko.SSHException, socket.timeout, TimeoutError, OSError) as e:
+                self.disconnect()
+                last_error = e
+                if attempt < attempts:
+                    self.logger.warning(
+                        "SSH connect attempt %s/%s failed for %s:%s: %s; retrying in %.1fs",
+                        attempt,
+                        attempts,
+                        self.site_config.host,
+                        self.site_config.port,
+                        e,
+                        retry_delay_seconds,
+                    )
+                    time.sleep(retry_delay_seconds)
+                    retry_delay_seconds *= 2
+                    continue
+                raise NetworkError(ErrorCode.REMOTE_DISCONNECT, f"SSH error: {e}")
+            except Exception as e:
+                self.disconnect()
+                raise SSHFerryError(ErrorCode.UNKNOWN_ERROR, f"Connection failed: {e}")
 
-        except paramiko.AuthenticationException as e:
-            raise AuthenticationError(f"Authentication failed: {e}")
-        except paramiko.SSHException as e:
-            raise NetworkError(ErrorCode.REMOTE_DISCONNECT, f"SSH error: {e}")
-        except Exception as e:
-            raise SSHFerryError(ErrorCode.UNKNOWN_ERROR, f"Connection failed: {e}")
+        if last_error is not None:
+            raise NetworkError(ErrorCode.REMOTE_DISCONNECT, f"SSH error: {last_error}")
 
     def disconnect(self) -> None:
         """Close SSH and SFTP connections."""

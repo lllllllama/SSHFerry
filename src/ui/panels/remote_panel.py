@@ -1,4 +1,5 @@
 ﻿"""Remote file panel for displaying remote directory contents."""
+import json
 import os
 
 from PySide6.QtCore import QByteArray, QMimeData, Qt, Signal
@@ -47,8 +48,16 @@ class DraggableTreeWidget(QTreeWidget):
 
         # Create custom MIME data for remote paths
         mime_data = QMimeData()
-        data = "\n".join(paths).encode("utf-8")
-        mime_data.setData("application/x-sshferry-remote", QByteArray(data))
+        panel = self.parent()
+        payload = {
+            "session_id": getattr(panel, "session_id", ""),
+            "site_name": getattr(panel, "site_name", ""),
+            "paths": paths,
+        }
+        mime_data.setData(
+            "application/x-sshferry-remote",
+            QByteArray(json.dumps(payload).encode("utf-8")),
+        )
 
         # Start drag
         drag = QDrag(self)
@@ -92,6 +101,7 @@ class RemotePanel(QWidget):
     request_upload_paths = Signal(list, object)  # upload specific local paths (from drag-drop), target item
     request_download = Signal(RemoteEntry)
     request_download_paths = Signal(list)  # download remote paths (from drag-drop)
+    request_remote_transfer = Signal(str, list, object)  # source_session_id, paths, target item
     
     # New signal for lazy loading
     request_expand = Signal(str, QTreeWidgetItem)  # path, item to populate
@@ -100,6 +110,8 @@ class RemotePanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_path = "/"
+        self.session_id = ""
+        self.site_name = ""
         self._drag_anim_active = False
         self._base_tree_stylesheet = ""
         self._drag_saved_current_item = None
@@ -148,29 +160,33 @@ class RemotePanel(QWidget):
         self.tree.setColumnWidth(1, 60)
         self.tree.setColumnWidth(2, 80)
 
-        # Improved styling
+        # Follow the active Qt palette instead of forcing a light theme.
         self._base_tree_stylesheet = """
             QTreeWidget {
                 font-size: 13px;
-                background-color: #ffffff;
-                border: 1px solid #e0e0e0;
+                background-color: palette(base);
+                color: palette(text);
+                alternate-background-color: palette(alternate-base);
+                border: 1px solid palette(mid);
             }
             QTreeWidget::item {
                 padding: 4px;
+                color: palette(text);
             }
             QTreeWidget::item:selected {
-                background-color: #cce4f7;
-                color: #333333;
+                background-color: palette(highlight);
+                color: palette(highlighted-text);
             }
             QTreeWidget::item:hover {
-                background-color: #e5f1fb;
+                background-color: rgba(127, 127, 127, 0.12);
+                color: palette(text);
             }
             QHeaderView::section {
-                background-color: #f0f4f8;
+                background-color: palette(window);
                 padding: 6px;
                 font-weight: bold;
-                border: 1px solid #e0e0e0;
-                color: #333333;
+                border: 1px solid palette(mid);
+                color: palette(window-text);
             }
         """
         self.tree.setStyleSheet(self._base_tree_stylesheet)
@@ -186,8 +202,15 @@ class RemotePanel(QWidget):
 
     def set_path(self, path: str):
         self.current_path = path
-        self.path_label.setText(f"Remote: {path}")
+        prefix = f"{self.site_name} " if self.site_name else ""
+        self.path_label.setText(f"{prefix}Remote: {path}")
         self.path_changed.emit(path)
+
+    def set_session_context(self, session_id: str, site_name: str):
+        """Attach this panel to a specific remote session."""
+        self.session_id = session_id
+        self.site_name = site_name
+        self.set_path(self.current_path)
 
     def set_root_entries(self, entries: list[RemoteEntry]):
         """Populate the root level of the tree."""
@@ -387,7 +410,7 @@ class RemotePanel(QWidget):
 
     def dragEnterEvent(self, event):
         """Accept drag events with file URLs."""
-        if event.mimeData().hasUrls():
+        if event.mimeData().hasUrls() or event.mimeData().hasFormat("application/x-sshferry-remote"):
             self._start_drag_animation()
             event.acceptProposedAction()
         else:
@@ -395,7 +418,7 @@ class RemotePanel(QWidget):
 
     def dragMoveEvent(self, event):
         """Accept drag move events with file URLs."""
-        if event.mimeData().hasUrls():
+        if event.mimeData().hasUrls() or event.mimeData().hasFormat("application/x-sshferry-remote"):
             self._set_drag_target_from_pos(event.pos())
             event.acceptProposedAction()
         else:
@@ -415,6 +438,17 @@ class RemotePanel(QWidget):
                 # Find target item
                 target_item = self._target_item_from_pos(event.pos())
                 self.request_upload_paths.emit(paths, target_item)
+            self._stop_drag_animation()
+            event.acceptProposedAction()
+            return
+        if event.mimeData().hasFormat("application/x-sshferry-remote"):
+            raw = bytes(event.mimeData().data("application/x-sshferry-remote")).decode("utf-8")
+            payload = json.loads(raw)
+            source_session_id = payload.get("session_id", "")
+            paths = payload.get("paths", [])
+            if source_session_id and paths and source_session_id != self.session_id:
+                target_item = self._target_item_from_pos(event.pos())
+                self.request_remote_transfer.emit(source_session_id, paths, target_item)
             self._stop_drag_animation()
             event.acceptProposedAction()
 

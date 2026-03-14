@@ -10,11 +10,10 @@ from src.shared.models import SiteConfig
 
 logger = logging.getLogger(__name__)
 
-# Fields that are safe to persist (no secrets)
 _PERSIST_FIELDS = [
     "name", "host", "port", "username", "auth_method", "remote_root",
     "key_path", "proxy_jump", "ssh_config_path", "ssh_options",
-    "default_transfer_protocol",
+    "default_transfer_protocol", "remember_password",
 ]
 
 
@@ -47,7 +46,7 @@ def _atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> Non
 
 
 class SiteStore:
-    """Load / save SiteConfig list from a JSON file (no passwords persisted)."""
+    """Load / save SiteConfig list from a JSON file."""
 
     def __init__(self, path: Optional[Path] = None):
         self.path = path or _default_store_path()
@@ -66,11 +65,13 @@ class SiteStore:
                     username=item["username"],
                     auth_method=item.get("auth_method", "password"),
                     remote_root=item.get("remote_root", "/") or "/",
+                    password=item.get("password"),
                     key_path=item.get("key_path"),
                     proxy_jump=item.get("proxy_jump"),
                     ssh_config_path=item.get("ssh_config_path"),
                     ssh_options=item.get("ssh_options", []),
                     default_transfer_protocol=item.get("default_transfer_protocol", "sftp"),
+                    remember_password=item.get("remember_password", False),
                 ))
             logger.info(f"Loaded {len(sites)} sites from {self.path}")
             return sites
@@ -82,6 +83,8 @@ class SiteStore:
         data = []
         for site in sites:
             item = {f: getattr(site, f) for f in _PERSIST_FIELDS}
+            if site.auth_method == "password" and site.remember_password and site.password:
+                item["password"] = site.password
             data.append(item)
         payload = json.dumps(data, indent=2, ensure_ascii=False)
         _atomic_write_text(self.path, payload, encoding="utf-8")

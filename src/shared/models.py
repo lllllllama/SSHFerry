@@ -1,9 +1,12 @@
 """Data models for SSHFerry."""
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from src.shared.errors import ErrorCode
+
+
+EndpointType = Literal["local", "remote"]
 
 
 @dataclass
@@ -17,10 +20,11 @@ class SiteConfig:
     auth_method: str  # "password" or "key"
     remote_root: str  # Sandbox root directory (e.g., /root/autodl-tmp)
 
-    # Auth credentials (runtime only, not persisted)
+    # Auth credentials
     password: Optional[str] = None
     key_path: Optional[str] = None
     key_passphrase: Optional[str] = None
+    remember_password: bool = False
 
     # Advanced SSH options
     proxy_jump: Optional[str] = None
@@ -62,15 +66,41 @@ class RemoteEntry:
 
 
 @dataclass
+class TaskEndpoint:
+    """Represents one side of a transfer task."""
+
+    endpoint_type: EndpointType
+    path: str
+    session_id: Optional[str] = None
+    site: Optional[SiteConfig] = None
+    display_name: Optional[str] = None
+
+    @property
+    def label(self) -> str:
+        if self.endpoint_type == "local":
+            return f"local:{self.path}"
+        site_name = self.display_name or (self.site.name if self.site else self.session_id) or "remote"
+        return f"{site_name}:{self.path}"
+
+
+@dataclass
 class Task:
     """Represents a file operation or transfer task."""
 
     task_id: str
-    kind: str  # "upload", "download", "delete", "mkdir", "rename"
+    kind: str  # "file_transfer", "folder_transfer", "delete", "mkdir", "rename"
     engine: str  # "sftp", "parallel", or "scp"
     src: str
     dst: str
     bytes_total: int
+    src_endpoint_type: EndpointType = "local"
+    dst_endpoint_type: EndpointType = "remote"
+    src_session_id: Optional[str] = None
+    dst_session_id: Optional[str] = None
+    src_site_snapshot: Optional[SiteConfig] = None
+    dst_site_snapshot: Optional[SiteConfig] = None
+    src_display_name: Optional[str] = None
+    dst_display_name: Optional[str] = None
 
     bytes_done: int = 0
     status: str = "pending"  # pending, running, paused, done, failed, canceled, skipped
@@ -107,3 +137,35 @@ class Task:
             f"Task({self.task_id[:8]}, {self.kind}, {self.status}, "
             f"{self.progress_percent:.1f}%)"
         )
+
+    @property
+    def src_endpoint(self) -> TaskEndpoint:
+        return TaskEndpoint(
+            endpoint_type=self.src_endpoint_type,
+            path=self.src,
+            session_id=self.src_session_id,
+            site=self.src_site_snapshot,
+            display_name=self.src_display_name,
+        )
+
+    @property
+    def dst_endpoint(self) -> TaskEndpoint:
+        return TaskEndpoint(
+            endpoint_type=self.dst_endpoint_type,
+            path=self.dst,
+            session_id=self.dst_session_id,
+            site=self.dst_site_snapshot,
+            display_name=self.dst_display_name,
+        )
+
+    @property
+    def is_remote_to_remote(self) -> bool:
+        return self.src_endpoint_type == "remote" and self.dst_endpoint_type == "remote"
+
+    @property
+    def is_local_to_remote(self) -> bool:
+        return self.src_endpoint_type == "local" and self.dst_endpoint_type == "remote"
+
+    @property
+    def is_remote_to_local(self) -> bool:
+        return self.src_endpoint_type == "remote" and self.dst_endpoint_type == "local"
