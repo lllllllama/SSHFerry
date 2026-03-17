@@ -1,6 +1,7 @@
-"""FastAPI backend entry point for the local SSHFerry service."""
+﻿"""FastAPI backend entry point for the local SSHFerry service."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 import os
 
@@ -13,9 +14,9 @@ from src import __version__
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan_factory(app: FastAPI, app_state_factory: Callable[[], AppState]):
     """Initialize and clean up shared backend state."""
-    app_state = AppState()
+    app_state = app_state_factory()
     app_state.start()
     app.state.app_state = app_state
     try:
@@ -24,12 +25,13 @@ async def lifespan(app: FastAPI):
         app_state.stop()
 
 
-def create_app() -> FastAPI:
+def create_app(app_state_factory: Callable[[], AppState] | None = None) -> FastAPI:
     """Create the FastAPI application."""
+    factory = app_state_factory or AppState
     app = FastAPI(
         title="SSHFerry Backend",
         version=__version__,
-        lifespan=lifespan,
+        lifespan=lambda app_instance: lifespan_factory(app_instance, factory),
     )
     app.include_router(api_router, prefix="/api")
     return app
