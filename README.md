@@ -47,6 +47,25 @@ It focuses on three goals: **safe remote operations**, **practical transfer beha
 - SSHFerry no longer auto-creates demo/test sites on startup.
 - If site list is empty, click `Add Site` to create your first connection.
 
+## Documentation
+
+Project entry docs stay in the repository root, while categorized technical docs now live under [`docs/`](./docs/README.md).
+
+- Frontend docs: [`docs/frontend/`](./docs/frontend/FRONTEND_BUILD.md)
+- Backend docs: [`docs/backend/`](./docs/backend/BACKEND_TODO.md)
+- Architecture and historical design notes: [`docs/architecture/`](./docs/architecture/agent.md)
+
+## Frontend Migration Docs
+
+The current repository already contains the backend APIs for the new desktopized frontend/backend split.
+If you are starting React frontend work, read these first:
+
+- [Frontend Build Guide](./docs/frontend/FRONTEND_BUILD.md)
+- [Frontend API Guide](./docs/frontend/FRONTEND_API.md)
+- [Backend TODO](./docs/backend/BACKEND_TODO.md)
+
+Note: the packaging instructions below are still for the legacy `PySide6` desktop client, not the upcoming React frontend.
+
 ## 📦 Install
 
 ```bash
@@ -285,3 +304,5 @@ tests/        # Pytest test suite
   - Linux/macOS: `~/.config/sshferry/sites.json`
 - Current positioning: personal and educational use.
 - For safer operations, prefer least-privilege accounts and a non-root `remote_root`.
+
+

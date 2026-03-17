@@ -4,6 +4,8 @@
 
 这份文档专门给前端开发使用。
 
+开始前端开发前，先配合阅读 [FRONTEND_BUILD.md](./FRONTEND_BUILD.md)。
+
 目标：
 
 - 说明当前本地 FastAPI 后端已经提供的接口
@@ -399,3 +401,4 @@ X-SSHFerry-Token
 
 - 任务中心优先使用 websocket
 - 如果 websocket 断开，再回退轮询 `GET /api/tasks`
+
