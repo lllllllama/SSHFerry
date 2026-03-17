@@ -4,17 +4,18 @@ import shutil
 
 from fastapi.testclient import TestClient
 
+from backend.app.api.deps import X_SSHFERRY_TOKEN
 from backend.app.main import create_app
 from backend.app.services.app_state import AppState
 from src.services.site_store import SiteStore
 
 
 def _build_test_client(store_path: Path) -> TestClient:
-    def factory() -> AppState:
-        return AppState(site_store=SiteStore(path=store_path))
-
-    app = create_app(app_state_factory=factory)
-    return TestClient(app)
+    state = AppState(site_store=SiteStore(path=store_path))
+    app = create_app(app_state_factory=lambda: state)
+    client = TestClient(app)
+    client.headers.update({X_SSHFERRY_TOKEN: state.auth_token})
+    return client
 
 
 def _run_in_temp_store(test_name: str, runner):

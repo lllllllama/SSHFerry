@@ -4,6 +4,7 @@ import shutil
 
 from fastapi.testclient import TestClient
 
+from backend.app.api.deps import X_SSHFERRY_TOKEN
 from backend.app.main import create_app
 from backend.app.services.app_state import AppState
 from backend.app.services.connection_service import ConnectionService
@@ -11,25 +12,12 @@ from src.services.site_store import SiteStore
 from src.shared.models import SiteConfig
 
 
-class _FakeCheckResponse:
-    def __init__(self, *, site_name: str, all_passed: bool):
-        self.site_name = site_name
-        self.all_passed = all_passed
-        self.results = [
-            {
-                'name': 'TCP Connection',
-                'passed': all_passed,
-                'message': 'ok' if all_passed else 'failed',
-            }
-        ]
-
-
 def _build_test_client(store_path: Path) -> TestClient:
-    def factory() -> AppState:
-        return AppState(site_store=SiteStore(path=store_path))
-
-    app = create_app(app_state_factory=factory)
-    return TestClient(app)
+    state = AppState(site_store=SiteStore(path=store_path))
+    app = create_app(app_state_factory=lambda: state)
+    client = TestClient(app)
+    client.headers.update({X_SSHFERRY_TOKEN: state.auth_token})
+    return client
 
 
 def _run_in_temp_store(test_name: str, runner):
@@ -145,4 +133,3 @@ def test_connection_check_route_uses_service_result(monkeypatch):
         assert body['results'][0]['name'] == 'TCP Connection'
 
     _run_in_temp_store('check', runner)
-

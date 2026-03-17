@@ -16,7 +16,7 @@ from backend.app.services.app_state import AppState
 from backend.app.services.connection_service import ConnectionService
 
 
-router = APIRouter(tags=["connections", "sessions"])
+router = APIRouter(tags=['connections', 'sessions'])
 
 
 @router.post('/connections/check', response_model=ConnectionCheckResponse)
@@ -24,13 +24,13 @@ def check_connection(
     payload: ConnectionCheckRequest,
     app_state: AppState = Depends(get_app_state),
 ) -> ConnectionCheckResponse:
-    service = ConnectionService(app_state.site_store, app_state.remote_sessions)
+    service = ConnectionService(app_state.site_store, app_state.remote_sessions, app_state.session_lock)
     return service.run_check(payload)
 
 
 @router.get('/sessions', response_model=SessionListResponse)
 def list_sessions(app_state: AppState = Depends(get_app_state)) -> SessionListResponse:
-    service = ConnectionService(app_state.site_store, app_state.remote_sessions)
+    service = ConnectionService(app_state.site_store, app_state.remote_sessions, app_state.session_lock)
     items = service.list_sessions()
     return SessionListResponse(items=items, total=len(items))
 
@@ -40,7 +40,7 @@ def open_session(
     payload: SessionOpenRequest,
     app_state: AppState = Depends(get_app_state),
 ) -> SessionResponse:
-    service = ConnectionService(app_state.site_store, app_state.remote_sessions)
+    service = ConnectionService(app_state.site_store, app_state.remote_sessions, app_state.session_lock)
     return service.open_session(payload)
 
 
@@ -49,6 +49,6 @@ def close_session(
     payload: SessionCloseRequest,
     app_state: AppState = Depends(get_app_state),
 ) -> Response:
-    service = ConnectionService(app_state.site_store, app_state.remote_sessions)
+    service = ConnectionService(app_state.site_store, app_state.remote_sessions, app_state.session_lock)
     service.close_session(payload.session_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

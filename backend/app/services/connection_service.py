@@ -1,6 +1,7 @@
 ﻿"""Connection checking and remote session orchestration."""
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import replace
 import uuid
 
@@ -20,9 +21,10 @@ from src.shared.models import SiteConfig
 class ConnectionService:
     """Operations for site-based connection checks and remote sessions."""
 
-    def __init__(self, site_store: SiteStore, remote_sessions: dict[str, SiteConfig]):
+    def __init__(self, site_store: SiteStore, remote_sessions: dict[str, SiteConfig], session_lock=None):
         self.site_store = site_store
         self.remote_sessions = remote_sessions
+        self.session_lock = session_lock
 
     def run_check(self, payload: ConnectionCheckRequest) -> ConnectionCheckResponse:
         runtime_site = self._resolve_runtime_site(
@@ -35,7 +37,7 @@ class ConnectionService:
         except ModuleNotFoundError as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"Connection check dependency unavailable: {exc}",
+                detail=f'Connection check dependency unavailable: {exc}',
             ) from exc
 
         checker = ConnectionChecker(runtime_site)
@@ -54,10 +56,9 @@ class ConnectionService:
         )
 
     def list_sessions(self) -> list[SessionResponse]:
-        items: list[SessionResponse] = []
-        for session_id, site in self.remote_sessions.items():
-            items.append(self._to_session_response(session_id, site))
-        return items
+        with self._session_guard():
+            items = list(self.remote_sessions.items())
+        return [self._to_session_response(session_id, site) for session_id, site in items]
 
     def open_session(self, payload: SessionOpenRequest) -> SessionResponse:
         runtime_site = self._resolve_runtime_site(
@@ -66,16 +67,18 @@ class ConnectionService:
             key_passphrase=payload.key_passphrase,
         )
         session_id = str(uuid.uuid4())
-        self.remote_sessions[session_id] = runtime_site
+        with self._session_guard():
+            self.remote_sessions[session_id] = runtime_site
         return self._to_session_response(session_id, runtime_site)
 
     def close_session(self, session_id: str) -> None:
-        if session_id not in self.remote_sessions:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Session '{session_id}' not found",
-            )
-        self.remote_sessions.pop(session_id, None)
+        with self._session_guard():
+            if session_id not in self.remote_sessions:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Session '{session_id}' not found",
+                )
+            self.remote_sessions.pop(session_id, None)
 
     def _resolve_runtime_site(
         self,
@@ -86,16 +89,16 @@ class ConnectionService:
     ) -> SiteConfig:
         site = self._load_site(site_name)
         runtime_site = replace(site)
-        runtime_site.remote_root = runtime_site.remote_root.strip() or "/"
+        runtime_site.remote_root = runtime_site.remote_root.strip() or '/'
 
-        if runtime_site.auth_method == "password":
+        if runtime_site.auth_method == 'password':
             runtime_site.password = password if password is not None else runtime_site.password
             if not runtime_site.password:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Site '{site_name}' requires a password",
                 )
-        elif runtime_site.auth_method == "key":
+        elif runtime_site.auth_method == 'key':
             runtime_site.key_passphrase = (
                 key_passphrase if key_passphrase is not None else runtime_site.key_passphrase
             )
@@ -117,6 +120,9 @@ class ConnectionService:
             detail=f"Site '{site_name}' not found",
         )
 
+    def _session_guard(self):
+        return self.session_lock if self.session_lock is not None else nullcontext()
+
     @staticmethod
     def _to_session_response(session_id: str, site: SiteConfig) -> SessionResponse:
         return SessionResponse(
@@ -127,5 +133,5 @@ class ConnectionService:
             username=site.username,
             auth_method=site.auth_method,
             remote_root=site.remote_root,
-            has_password=(site.auth_method == "password" and bool(site.password)),
+            has_password=(site.auth_method == 'password' and bool(site.password)),
         )

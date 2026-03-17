@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import logging
+import os
 from pathlib import Path
+import secrets
+from threading import RLock
 from typing import TYPE_CHECKING
 
 from src.services.site_store import SiteStore
@@ -22,27 +25,35 @@ def _build_site_store() -> SiteStore:
     try:
         return SiteStore()
     except Exception as exc:
-        fallback_dir = Path.cwd() / ".backend_runtime"
+        fallback_dir = Path.cwd() / '.backend_runtime'
         fallback_dir.mkdir(parents=True, exist_ok=True)
-        fallback_path = fallback_dir / "sites.json"
-        _module_logger.warning("Falling back to workspace site store at %s: %s", fallback_path, exc)
+        fallback_path = fallback_dir / 'sites.json'
+        _module_logger.warning('Falling back to workspace site store at %s: %s', fallback_path, exc)
         return SiteStore(path=fallback_path)
+
+
+def _build_auth_token() -> str:
+    configured = os.getenv('SSHFERRY_LOCAL_TOKEN', '').strip()
+    return configured or secrets.token_urlsafe(32)
 
 
 @dataclass(slots=True)
 class AppState:
     """Long-lived backend objects shared across requests."""
 
-    logger: logging.Logger = field(default_factory=lambda: setup_logger("sshferry.backend"))
+    logger: logging.Logger = field(default_factory=lambda: setup_logger('sshferry.backend'))
     site_store: SiteStore = field(default_factory=_build_site_store)
     scheduler: TaskScheduler | None = field(init=False, default=None)
     remote_sessions: dict[str, SiteConfig] = field(default_factory=dict)
+    session_lock: RLock = field(default_factory=RLock)
+    auth_token: str = field(default_factory=_build_auth_token)
     startup_error: str | None = field(init=False, default=None)
 
     @property
     def session_count(self) -> int:
         """Return the number of active in-memory remote sessions."""
-        return len(self.remote_sessions)
+        with self.session_lock:
+            return len(self.remote_sessions)
 
     @property
     def is_ready(self) -> bool:
@@ -57,20 +68,20 @@ class AppState:
             self.scheduler = TaskScheduler(logger=self.logger)
             self.scheduler.start()
             self.startup_error = None
-            self.logger.info("Backend app state started")
+            self.logger.info('Backend app state started')
         except Exception as exc:
             self.scheduler = None
             self.startup_error = str(exc)
-            self.logger.error("Backend app state failed to start core services: %s", exc)
+            self.logger.error('Backend app state failed to start core services: %s', exc)
 
     def stop(self) -> None:
         """Stop backend background services."""
         if self.scheduler and self.scheduler.running:
             self.scheduler.stop()
-        self.logger.info("Backend app state stopped")
+        self.logger.info('Backend app state stopped')
 
     def require_scheduler(self) -> TaskScheduler:
         """Return the scheduler or raise a clear startup error."""
         if self.scheduler is None:
-            raise RuntimeError(self.startup_error or "Task scheduler is unavailable")
+            raise RuntimeError(self.startup_error or 'Task scheduler is unavailable')
         return self.scheduler
