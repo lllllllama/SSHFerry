@@ -1,4 +1,4 @@
-﻿import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 
 import { useI18n } from '../../i18n';
 import { useAuthStore } from '../../store/auth';
@@ -71,6 +71,9 @@ export function AppTopBar() {
           </Link>
           <Link className={location.pathname === '/tasks' ? 'nav-link active' : 'nav-link'} to="/tasks">
             {t('nav.tasks')}
+          </Link>
+          <Link className={location.pathname === '/logs' ? 'nav-link active' : 'nav-link'} to="/logs">
+            {t('nav.logs')}
           </Link>
         </nav>
       </div>

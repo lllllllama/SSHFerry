@@ -1,9 +1,10 @@
-﻿import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from 'react-router-dom';
 
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { ToastViewport } from '../components/common/ToastViewport';
 import { useBackendSession } from '../hooks/useBackendSession';
+import { useLogSocket } from '../hooks/useLogSocket';
 import { useTaskSocket } from '../hooks/useTaskSocket';
 import { useWorkspaceBootstrap } from '../hooks/useWorkspaceBootstrap';
 import { I18nProvider } from '../i18n';
@@ -25,6 +26,7 @@ function AppRuntime() {
   useBackendSession();
   useWorkspaceBootstrap();
   useTaskSocket();
+  useLogSocket();
   return null;
 }
 

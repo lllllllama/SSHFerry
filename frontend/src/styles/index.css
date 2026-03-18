@@ -1,4 +1,4 @@
-﻿* {
+* {
   box-sizing: border-box;
 }
 
@@ -385,7 +385,7 @@ a {
   align-items: start;
 }
 
-.tasks-page-shell {
+.content-page-shell {
   margin-top: 18px;
 }
 
@@ -1039,5 +1039,160 @@ a {
 
   .middle-panel-button {
     flex: 1 1 0;
+  }
+}
+.log-viewer {
+  min-height: 280px;
+}
+
+.log-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.log-toolbar-meta,
+.log-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.log-auto-scroll {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+.log-auto-scroll input {
+  width: auto;
+}
+
+.log-viewer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 14px 18px 18px;
+  overflow: hidden;
+}
+
+.log-list {
+  height: 100%;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.log-entry {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.log-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.log-source {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-message {
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.log-empty {
+  height: 100%;
+}
+
+@media (max-width: 860px) {
+  .log-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+.log-viewer-full {
+  min-height: calc(100vh - 150px);
+}
+
+.log-terminal-shell {
+  flex: 1 1 auto;
+  min-height: clamp(420px, calc(100vh - 250px), 760px);
+  overflow: auto;
+  padding: 18px 20px;
+  background: linear-gradient(180deg, #0f171c, #111b20);
+  color: #dbe6eb;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.log-terminal-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.log-terminal-line + .log-terminal-line {
+  margin-top: 6px;
+}
+
+.log-terminal-line.is-warning {
+  color: #f2d29b;
+}
+
+.log-terminal-line.is-error,
+.log-terminal-line.is-critical {
+  color: #f5a7a0;
+}
+
+.log-terminal-line.is-debug {
+  color: #8ca1ad;
+}
+
+.log-terminal-empty {
+  padding: 0;
+  color: #aebec7;
+}
+
+@media (max-width: 860px) {
+  .log-viewer-full {
+    min-height: auto;
+  }
+
+  .log-terminal-shell {
+    min-height: 360px;
+    padding: 16px;
+  }
+}
+.logs-page-shell {
+  display: flex;
+  justify-content: center;
+}
+
+.logs-page-shell .log-viewer-full {
+  width: 100%;
+  max-width: 100%;
+}
+
+@media (min-width: 1180px) {
+  .logs-page-shell .log-viewer-full {
+    max-width: min(1240px, 66.666vw);
   }
 }

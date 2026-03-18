@@ -1,4 +1,4 @@
-﻿"""Application state shared across backend routes and services."""
+"""Application state shared across backend routes and services."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -9,6 +9,7 @@ import secrets
 from threading import RLock
 from typing import TYPE_CHECKING
 
+from backend.app.services.log_service import LogService
 from src.services.site_store import SiteStore
 from src.shared.logging_ import setup_logger
 from src.shared.models import SiteConfig
@@ -43,11 +44,18 @@ class AppState:
 
     logger: logging.Logger = field(default_factory=lambda: setup_logger('sshferry.backend'))
     site_store: SiteStore = field(default_factory=_build_site_store)
+    log_service: LogService = field(init=False)
     scheduler: TaskScheduler | None = field(init=False, default=None)
     remote_sessions: dict[str, SiteConfig] = field(default_factory=dict)
     session_lock: RLock = field(default_factory=RLock)
     auth_token: str = field(default_factory=_build_auth_token)
     startup_error: str | None = field(init=False, default=None)
+
+    def __post_init__(self) -> None:
+        self.log_service = LogService()
+        self.log_service.attach_logger(self.logger)
+        self.log_service.attach_logger(logging.getLogger('src'))
+        self.log_service.attach_logger(logging.getLogger('backend.app'))
 
     @property
     def session_count(self) -> int:
@@ -79,6 +87,7 @@ class AppState:
         if self.scheduler and self.scheduler.running:
             self.scheduler.stop()
         self.logger.info('Backend app state stopped')
+        self.log_service.close()
 
     def require_scheduler(self) -> TaskScheduler:
         """Return the scheduler or raise a clear startup error."""

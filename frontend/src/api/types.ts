@@ -191,6 +191,30 @@ export interface TaskSocketErrorMessage {
 
 export type TaskSocketMessage = TaskSnapshotMessage | TaskSocketErrorMessage;
 
+export interface LogItem {
+  sequence: number;
+  timestamp: number;
+  level: string;
+  logger: string;
+  message: string;
+  rendered: string;
+}
+
+export interface LogListResponse {
+  items: LogItem[];
+  total: number;
+  sequence: number;
+}
+
+export interface LogSnapshotMessage {
+  type: 'log_snapshot';
+  items: LogItem[];
+  total: number;
+  sequence: number;
+}
+
+export type LogSocketMessage = LogSnapshotMessage | TaskSocketErrorMessage;
+
 export interface ApiListResponse<T> {
   items: T[];
   total: number;
