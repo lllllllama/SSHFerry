@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
+﻿import { useEffect } from 'react';
 
 import { listTasks } from '../api/tasks';
 import { getTaskSocketUrl, parseTaskSocketMessage } from '../api/ws';
+import { translate } from '../i18n';
 import { useAuthStore } from '../store/auth';
 import { useTasksStore } from '../store/tasks';
 import { useUiStore } from '../store/ui';
@@ -34,7 +35,7 @@ export function useTaskSocket() {
         const snapshot = await listTasks();
         setSnapshot(snapshot.items, snapshot.total);
       } catch (error) {
-        setSocketError(error instanceof Error ? error.message : '任务轮询失败');
+        setSocketError(error instanceof Error ? error.message : translate('socket.pollFailed'));
       }
     };
 
@@ -84,7 +85,7 @@ export function useTaskSocket() {
         setSocketError(payload.detail);
         pushToast({
           tone: 'warning',
-          title: '任务通道返回错误',
+          title: translate('socket.channelErrorTitle'),
           message: payload.detail,
         });
       };
@@ -101,7 +102,7 @@ export function useTaskSocket() {
       };
 
       socket.onerror = () => {
-        setSocketError('任务 WebSocket 连接异常');
+        setSocketError(translate('socket.websocketError'));
       };
     };
 

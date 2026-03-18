@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 
 import type { SiteResponse } from '../../api/types';
+import { useI18n } from '../../i18n';
 import { Modal } from '../common/Modal';
 
 interface SecretPromptDialogProps {
@@ -21,6 +22,7 @@ export function SecretPromptDialog({
   onSubmit,
 }: SecretPromptDialogProps) {
   const [secret, setSecret] = useState('');
+  const { t } = useI18n();
 
   useEffect(() => {
     if (open) {
@@ -39,7 +41,7 @@ export function SecretPromptDialog({
       footer={
         <>
           <button type="button" className="ghost-button" onClick={onClose}>
-            取消
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -54,12 +56,12 @@ export function SecretPromptDialog({
       }
     >
       <label className="form-field">
-        <span>{isPassword ? '运行时密码' : '私钥口令'}</span>
+        <span>{isPassword ? t('secret.runtimePassword') : t('secret.keyPassphrase')}</span>
         <input
           type="password"
           value={secret}
           onChange={(event) => setSecret(event.target.value)}
-          placeholder={isPassword ? '输入本次连接使用的密码' : '如无私钥口令可留空'}
+          placeholder={isPassword ? t('secret.runtimePasswordPlaceholder') : t('secret.keyPassphrasePlaceholder')}
         />
       </label>
     </Modal>

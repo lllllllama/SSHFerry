@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+﻿import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Navigate } from 'react-router-dom';
 
 import { closeSession } from '../../api/sessions';
@@ -11,6 +11,7 @@ import { RemoteWorkspace } from '../../components/remote-workspace/RemoteWorkspa
 import { SiteEditorModal } from '../../components/sites/SiteEditorModal';
 import { SiteSidebar } from '../../components/sites/SiteSidebar';
 import { TaskCenter } from '../../components/tasks/TaskCenter';
+import { useI18n } from '../../i18n';
 import { useAuthStore } from '../../store/auth';
 import { useUiStore } from '../../store/ui';
 import { useWorkspaceStore } from '../../store/workspace';
@@ -27,6 +28,7 @@ export function WorkspacePage() {
   const panes = useWorkspaceStore((state) => state.panes);
   const protocolOverride = useUiStore((state) => state.protocolOverride);
   const pushToast = useUiStore((state) => state.pushToast);
+  const { t } = useI18n();
 
   const uploadMutation = useMutation({ mutationFn: createUploadTask });
   const downloadMutation = useMutation({ mutationFn: createDownloadTask });
@@ -41,9 +43,9 @@ export function WorkspacePage() {
     return (
       <main className="bootstrap-page">
         <section className="bootstrap-panel">
-          <div className="eyebrow">Workspace</div>
-          <h1>等待后端初始化</h1>
-          <p>正在准备站点、会话与任务通道。</p>
+          <div className="eyebrow">{t('nav.workspace')}</div>
+          <h1>{t('workspace.waitTitle')}</h1>
+          <p>{t('workspace.waitDescription')}</p>
         </section>
       </main>
     );
@@ -51,7 +53,7 @@ export function WorkspacePage() {
 
   async function queueUploads(localPaths: string[], sessionId: string, targetDir: string) {
     if (!localPaths.length) {
-      pushToast({ tone: 'warning', title: '没有可上传的本地选中项' });
+      pushToast({ tone: 'warning', title: t('workspace.toast.noUploadSelection') });
       return;
     }
     const results = await Promise.allSettled(
@@ -67,14 +69,17 @@ export function WorkspacePage() {
     const summary = summarizeResults(results);
     pushToast({
       tone: summary.successCount === summary.total ? 'success' : 'warning',
-      title: '上传任务已提交',
-      message: `${summary.successCount}/${summary.total} 项已进入后端调度。`,
+      title: t('workspace.toast.uploadSubmitted'),
+      message: t('workspace.toast.queueSummary', {
+        successCount: summary.successCount,
+        total: summary.total,
+      }),
     });
   }
 
   async function queueDownloads(sessionId: string, remotePaths: string[], targetDir: string) {
     if (!remotePaths.length || !targetDir) {
-      pushToast({ tone: 'warning', title: '缺少下载源或本地目标目录' });
+      pushToast({ tone: 'warning', title: t('workspace.toast.noDownloadTarget') });
       return;
     }
     const results = await Promise.allSettled(
@@ -90,8 +95,11 @@ export function WorkspacePage() {
     const summary = summarizeResults(results);
     pushToast({
       tone: summary.successCount === summary.total ? 'success' : 'warning',
-      title: '下载任务已提交',
-      message: `${summary.successCount}/${summary.total} 项已进入后端调度。`,
+      title: t('workspace.toast.downloadSubmitted'),
+      message: t('workspace.toast.queueSummary', {
+        successCount: summary.successCount,
+        total: summary.total,
+      }),
     });
   }
 
@@ -102,7 +110,7 @@ export function WorkspacePage() {
     targetDir: string,
   ) {
     if (!remotePaths.length) {
-      pushToast({ tone: 'warning', title: '没有可复制的远端选中项' });
+      pushToast({ tone: 'warning', title: t('workspace.toast.noRemoteCopySelection') });
       return;
     }
     const results = await Promise.allSettled(
@@ -119,8 +127,11 @@ export function WorkspacePage() {
     const summary = summarizeResults(results);
     pushToast({
       tone: summary.successCount === summary.total ? 'success' : 'warning',
-      title: '远端互传任务已提交',
-      message: `${summary.successCount}/${summary.total} 项已进入后端调度。`,
+      title: t('workspace.toast.remoteCopySubmitted'),
+      message: t('workspace.toast.queueSummary', {
+        successCount: summary.successCount,
+        total: summary.total,
+      }),
     });
   }
 
@@ -135,7 +146,7 @@ export function WorkspacePage() {
     await closeSessionMutation.mutateAsync({ session_id: sessionId });
     useWorkspaceStore.getState().closePane(sessionId);
     await queryClient.invalidateQueries({ queryKey: ['sessions'] });
-    pushToast({ tone: 'success', title: '远端会话已关闭' });
+    pushToast({ tone: 'success', title: t('workspace.toast.sessionClosed') });
   }
 
   return (

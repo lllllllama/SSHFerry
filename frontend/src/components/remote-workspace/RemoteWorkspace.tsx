@@ -1,3 +1,4 @@
+﻿import { useI18n } from '../../i18n';
 import type { RemotePaneState } from '../../store/workspace';
 import { RemotePane } from './RemotePane';
 
@@ -21,18 +22,20 @@ export function RemoteWorkspace({
   onQueueDownloads,
   onQueueRemoteCopies,
 }: RemoteWorkspaceProps) {
+  const { t } = useI18n();
+
   if (!panes.length) {
     return (
       <section className="panel-shell remote-workspace-empty">
         <header className="panel-header">
           <div>
-            <h3>Remote Workspace</h3>
-            <p>多 session 并排工作区。</p>
+            <h3>{t('remoteWorkspace.title')}</h3>
+            <p>{t('remoteWorkspace.description')}</p>
           </div>
         </header>
         <div className="placeholder-body">
-          <strong>No remote sessions open</strong>
-          <p>从左侧选择站点并打开 session，远端 pane 会按顺序追加到右侧。</p>
+          <strong>{t('remoteWorkspace.emptyTitle')}</strong>
+          <p>{t('remoteWorkspace.emptyBody')}</p>
         </div>
       </section>
     );

@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+﻿import { create } from 'zustand';
 
 import type { ProtocolOverride, SiteResponse } from '../api/types';
 
@@ -47,7 +47,7 @@ export const useUiStore = create<UiState>((set) => ({
     open: false,
     title: '',
     description: '',
-    confirmLabel: '确认',
+    confirmLabel: '',
     destructive: false,
     onConfirm: null,
   },

@@ -1,4 +1,4 @@
-import type { TaskItem } from '../api/types';
+﻿import type { TaskItem } from '../api/types';
 
 export const TASK_STATUS_PRIORITY: Record<string, number> = {
   running: 0,
@@ -34,28 +34,17 @@ export function formatSpeed(value: number): string {
   return `${formatBytes(value)}/s`;
 }
 
-export function formatTimestamp(value: number | null): string {
+export function formatTimestamp(value: number | null, locale = 'zh-CN'): string {
   if (!value) {
     return '--';
   }
-  return new Date(value * 1000).toLocaleString('zh-CN', {
+  return new Date(value * 1000).toLocaleString(locale, {
     hour12: false,
   });
 }
 
 export function shortId(value: string, length = 8): string {
   return value.slice(0, length);
-}
-
-export function describeTaskProgress(task: TaskItem): string {
-  if (task.kind === 'folder_transfer' && task.subtask_count > 0) {
-    const current = task.current_file ? ` · ${task.current_file}` : '';
-    return `${task.subtask_done}/${task.subtask_count} 文件 · ${task.progress_percent.toFixed(1)}%${current}`;
-  }
-  if (!task.bytes_total) {
-    return `${task.progress_percent.toFixed(1)}%`;
-  }
-  return `${task.progress_percent.toFixed(1)}% · ${formatBytes(task.bytes_done)}/${formatBytes(task.bytes_total)}`;
 }
 
 export function sortTasks(items: TaskItem[]): TaskItem[] {

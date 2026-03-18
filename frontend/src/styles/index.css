@@ -1,4 +1,4 @@
-* {
+﻿* {
   box-sizing: border-box;
 }
 
@@ -167,6 +167,38 @@ a {
   gap: 8px;
   color: var(--text-soft);
   font-size: 13px;
+}
+
+.topbar-controls {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.locale-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.locale-button {
+  border: 0;
+  background: transparent;
+  border-radius: 999px;
+  padding: 8px 12px;
+  cursor: pointer;
+  color: var(--text-soft);
+}
+
+.locale-button.is-active {
+  background: var(--accent);
+  color: #f8fbfc;
 }
 
 .topbar-nav {

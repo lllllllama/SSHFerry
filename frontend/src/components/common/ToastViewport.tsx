@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
+﻿import { useEffect } from 'react';
 
+import { useI18n } from '../../i18n';
 import { useUiStore } from '../../store/ui';
 
 const TOAST_TTL_MS = 4200;
@@ -7,6 +8,7 @@ const TOAST_TTL_MS = 4200;
 export function ToastViewport() {
   const toasts = useUiStore((state) => state.toasts);
   const dismissToast = useUiStore((state) => state.dismissToast);
+  const { t } = useI18n();
 
   useEffect(() => {
     const timers = toasts.map((toast) =>
@@ -33,7 +35,7 @@ export function ToastViewport() {
             {toast.message ? <p>{toast.message}</p> : null}
           </div>
           <button type="button" className="ghost-button" onClick={() => dismissToast(toast.id)}>
-            收起
+            {t('common.dismiss')}
           </button>
         </article>
       ))}

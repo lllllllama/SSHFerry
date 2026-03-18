@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 
 import { cancelTask, clearFinishedTasks, pauseTask, restartTask, resumeTask } from '../../api/tasks';
 import type { TaskItem } from '../../api/types';
+import { useI18n } from '../../i18n';
 import { useTasksStore } from '../../store/tasks';
 import { useUiStore } from '../../store/ui';
-import { describeTaskProgress, formatSpeed, sortTasks, TASK_STATUS_PRIORITY } from '../../utils/format';
+import { sortTasks } from '../../utils/format';
 import { StatusBadge } from '../common/StatusBadge';
 
 interface TaskCenterProps {
@@ -76,6 +77,7 @@ export function TaskCenter({ fullPage = false }: TaskCenterProps) {
   const setTaskCenterExpanded = useUiStore((state) => state.setTaskCenterExpanded);
   const pushToast = useUiStore((state) => state.pushToast);
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
+  const { formatDirection, formatSocketStatus, formatTaskProgress, formatTaskStatus, formatTransferSpeed, t } = useI18n();
 
   const pauseMutation = useMutation({ mutationFn: pauseTask });
   const resumeMutation = useMutation({ mutationFn: resumeTask });
@@ -114,8 +116,8 @@ export function TaskCenter({ fullPage = false }: TaskCenterProps) {
     const successCount = results.filter((result) => result.status === 'fulfilled').length;
     pushToast({
       tone: successCount === results.length ? 'success' : 'warning',
-      title: `任务${action}已提交`,
-      message: `${successCount}/${results.length} 项请求已接受。`,
+      title: t('taskCenter.toast.actionSubmitted', { action: t(`task.action.${action}`) }),
+      message: t('taskCenter.toast.actionAccepted', { successCount, total: results.length }),
     });
   }
 
@@ -123,25 +125,31 @@ export function TaskCenter({ fullPage = false }: TaskCenterProps) {
     <section className={`panel-shell task-center ${fullPage ? 'task-center-full' : ''}`}>
       <header className="panel-header">
         <div>
-          <h3>Task Center</h3>
+          <h3>{t('taskCenter.title')}</h3>
           <p>
-            Total {summary.total} · Running {summary.running} · Pending {summary.pending} · Failed {summary.failed} · Done {summary.done}
+            {t('taskCenter.summary', {
+              total: summary.total,
+              running: summary.running,
+              pending: summary.pending,
+              failed: summary.failed,
+              done: summary.done,
+            })}
           </p>
         </div>
         <div className="panel-actions">
-          <StatusBadge tone={getSocketTone(socketStatus)}>{socketStatus}</StatusBadge>
+          <StatusBadge tone={getSocketTone(socketStatus)}>{formatSocketStatus(socketStatus)}</StatusBadge>
           {!fullPage ? (
             <button
               type="button"
               className="ghost-button"
               onClick={() => setTaskCenterExpanded(!taskCenterExpanded)}
             >
-              {taskCenterExpanded ? 'Collapse' : 'Expand'}
+              {taskCenterExpanded ? t('common.collapse') : t('common.expand')}
             </button>
           ) : null}
           {!fullPage ? (
             <Link className="ghost-button link-button" to="/tasks">
-              Open Tasks Page
+              {t('taskCenter.openPage')}
             </Link>
           ) : null}
         </div>
@@ -157,31 +165,31 @@ export function TaskCenter({ fullPage = false }: TaskCenterProps) {
                   setCheckedIds(event.target.checked ? sortedItems.map((task) => task.task_id) : []);
                 }}
               />
-              Select All
+              {t('common.selectAll')}
             </label>
             <div className="task-toolbar-actions">
               <button type="button" className="ghost-button" onClick={() => void runTaskAction('pause')}>
-                Pause
+                {t('task.action.pause')}
               </button>
               <button type="button" className="ghost-button" onClick={() => void runTaskAction('resume')}>
-                Resume
+                {t('task.action.resume')}
               </button>
               <button type="button" className="ghost-button" onClick={() => void runTaskAction('cancel')}>
-                Cancel
+                {t('task.action.cancel')}
               </button>
               <button type="button" className="ghost-button" onClick={() => void runTaskAction('restart')}>
-                Restart
+                {t('task.action.restart')}
               </button>
               <button
                 type="button"
                 className="ghost-button"
                 onClick={() => {
                   void clearFinishedMutation.mutateAsync().then(() => {
-                    pushToast({ tone: 'success', title: '已清理终态任务' });
+                    pushToast({ tone: 'success', title: t('taskCenter.toast.clearedFinished') });
                   });
                 }}
               >
-                Clear Finished
+                {t('taskCenter.clearFinished')}
               </button>
             </div>
           </div>
@@ -190,21 +198,21 @@ export function TaskCenter({ fullPage = false }: TaskCenterProps) {
               <thead>
                 <tr>
                   <th />
-                  <th>ID</th>
-                  <th>Direction</th>
-                  <th>Engine</th>
-                  <th>Status</th>
-                  <th>Progress</th>
-                  <th>Speed</th>
-                  <th>Current</th>
-                  <th>Actions</th>
+                  <th>{t('common.id')}</th>
+                  <th>{t('common.direction')}</th>
+                  <th>{t('common.engine')}</th>
+                  <th>{t('common.status')}</th>
+                  <th>{t('common.progress')}</th>
+                  <th>{t('common.speed')}</th>
+                  <th>{t('common.current')}</th>
+                  <th>{t('common.actions')}</th>
                 </tr>
               </thead>
               <tbody>
                 {!sortedItems.length ? (
                   <tr>
                     <td colSpan={9} className="table-empty-row">
-                      当前没有任务。
+                      {t('taskCenter.empty')}
                     </td>
                   </tr>
                 ) : null}
@@ -224,18 +232,18 @@ export function TaskCenter({ fullPage = false }: TaskCenterProps) {
                       />
                     </td>
                     <td className="mono-cell">{task.task_id.slice(0, 8)}</td>
-                    <td>{task.src_endpoint_type} → {task.dst_endpoint_type}</td>
-                    <td>{task.engine}</td>
+                    <td>{formatDirection(task.src_endpoint_type, task.dst_endpoint_type)}</td>
+                    <td>{task.engine.toUpperCase()}</td>
                     <td>
-                      <StatusBadge tone={getTaskTone(task.status)}>{task.status}</StatusBadge>
+                      <StatusBadge tone={getTaskTone(task.status)}>{formatTaskStatus(task.status)}</StatusBadge>
                     </td>
-                    <td>{describeTaskProgress(task)}</td>
-                    <td>{formatSpeed(task.speed)}</td>
+                    <td>{formatTaskProgress(task)}</td>
+                    <td>{formatTransferSpeed(task.speed)}</td>
                     <td className="task-current-cell">
                       <div>{task.current_file || task.dst_label}</div>
                       {task.error_message ? (
                         <details>
-                          <summary>查看失败详情</summary>
+                          <summary>{t('common.viewFailureDetails')}</summary>
                           <p>{task.error_message}</p>
                         </details>
                       ) : null}
@@ -243,16 +251,16 @@ export function TaskCenter({ fullPage = false }: TaskCenterProps) {
                     <td>
                       <div className="inline-actions compact-actions">
                         <button type="button" className="row-action" onClick={() => void pauseMutation.mutateAsync(task.task_id)}>
-                          Pause
+                          {t('task.action.pause')}
                         </button>
                         <button type="button" className="row-action" onClick={() => void resumeMutation.mutateAsync(task.task_id)}>
-                          Resume
+                          {t('task.action.resume')}
                         </button>
                         <button type="button" className="row-action" onClick={() => void cancelMutation.mutateAsync(task.task_id)}>
-                          Cancel
+                          {t('task.action.cancel')}
                         </button>
                         <button type="button" className="row-action" onClick={() => void restartMutation.mutateAsync(task.task_id)}>
-                          Restart
+                          {t('task.action.restart')}
                         </button>
                       </div>
                     </td>

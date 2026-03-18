@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+﻿import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from 'react-router-dom';
 
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
@@ -6,6 +6,7 @@ import { ToastViewport } from '../components/common/ToastViewport';
 import { useBackendSession } from '../hooks/useBackendSession';
 import { useTaskSocket } from '../hooks/useTaskSocket';
 import { useWorkspaceBootstrap } from '../hooks/useWorkspaceBootstrap';
+import { I18nProvider } from '../i18n';
 import { router } from './router';
 
 const queryClient = new QueryClient({
@@ -30,10 +31,12 @@ function AppRuntime() {
 export function AppProviders() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AppRuntime />
-      <RouterProvider router={router} />
-      <ConfirmDialog />
-      <ToastViewport />
+      <I18nProvider>
+        <AppRuntime />
+        <RouterProvider router={router} />
+        <ConfirmDialog />
+        <ToastViewport />
+      </I18nProvider>
     </QueryClientProvider>
   );
 }

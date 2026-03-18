@@ -1,9 +1,10 @@
-import { useEffect } from 'react';
+﻿import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { getErrorMessage } from '../../api/http';
 import { listLocalDrives, listLocalFiles } from '../../api/localFiles';
 import type { TransferDragPayload } from '../../api/types';
+import { useI18n } from '../../i18n';
 import { useWorkspaceStore } from '../../store/workspace';
 import { FileTable } from './FileTable';
 
@@ -18,6 +19,7 @@ export function LocalPanel({ onQueueDownloads }: LocalPanelProps) {
   const setLocalPath = useWorkspaceStore((state) => state.setLocalPath);
   const setLocalPathDraft = useWorkspaceStore((state) => state.setLocalPathDraft);
   const toggleLocalSelection = useWorkspaceStore((state) => state.toggleLocalSelection);
+  const { t } = useI18n();
 
   const drivesQuery = useQuery({
     queryKey: ['local-drives'],
@@ -43,8 +45,8 @@ export function LocalPanel({ onQueueDownloads }: LocalPanelProps) {
     <section className="panel-shell">
       <header className="panel-header">
         <div>
-          <h3>Local Panel</h3>
-          <p>目录浏览、多选上传、接收远端下载。</p>
+          <h3>{t('localPanel.title')}</h3>
+          <p>{t('localPanel.description')}</p>
         </div>
         <div className="panel-actions">
           <select
@@ -52,7 +54,7 @@ export function LocalPanel({ onQueueDownloads }: LocalPanelProps) {
             value={drivesQuery.data?.items.some((item) => item.path === localCurrentPath) ? localCurrentPath : ''}
             onChange={(event) => setLocalPath(event.target.value)}
           >
-            <option value="">选择盘符</option>
+            <option value="">{t('localPanel.chooseDrive')}</option>
             {drivesQuery.data?.items.map((drive) => (
               <option key={drive.path} value={drive.path}>
                 {drive.label}
@@ -72,7 +74,7 @@ export function LocalPanel({ onQueueDownloads }: LocalPanelProps) {
             ..
           </button>
           <button type="button" className="ghost-button" onClick={() => listingQuery.refetch()}>
-            Refresh
+            {t('common.refresh')}
           </button>
         </div>
       </header>
@@ -85,16 +87,16 @@ export function LocalPanel({ onQueueDownloads }: LocalPanelProps) {
               setLocalPath(localPathDraft.trim());
             }
           }}
-          placeholder="输入本地路径"
+          placeholder={t('localPanel.pathPlaceholder')}
         />
       </div>
       <FileTable
         entries={listingQuery.data?.items ?? []}
         selectedPaths={localSelection}
         currentPath={listingQuery.data?.current_path || localCurrentPath}
-        emptyMessage="当前目录为空。"
+        emptyMessage={t('localPanel.empty')}
         isLoading={listingQuery.isPending}
-        errorMessage={listingQuery.error ? getErrorMessage(listingQuery.error, '无法读取本地目录') : null}
+        errorMessage={listingQuery.error ? getErrorMessage(listingQuery.error, t('localPanel.loadError')) : null}
         onSelect={(path, multi) => toggleLocalSelection(path, multi)}
         onActivate={(entry) => {
           if (entry.is_dir) {

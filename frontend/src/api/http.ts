@@ -1,7 +1,8 @@
-import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios';
+﻿import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios';
 
 import { useAuthStore } from '../store/auth';
 import { useUiStore } from '../store/ui';
+import { translate } from '../i18n';
 
 export class ApiError extends Error {
   status?: number;
@@ -34,17 +35,17 @@ http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 http.interceptors.response.use(
   (response) => response,
   (error: AxiosError<{ detail?: string }>) => {
-    const detail = error.response?.data?.detail || error.message || 'Request failed';
+    const detail = error.response?.data?.detail || error.message || translate('http.requestFailed');
     const apiError = new ApiError(detail, error.response?.status);
 
     if (apiError.status === 401) {
-      useAuthStore.getState().setInitError('本地后端会话失效，需要重新初始化。');
+      useAuthStore.getState().setInitError(translate('http.sessionInvalid'));
     }
     if (apiError.status === 503) {
       useUiStore.getState().pushToast({
         tone: 'warning',
-        title: '后端未就绪',
-        message: '服务可达，但依赖未就绪或当前机器缺少必要能力。',
+        title: translate('http.backendNotReadyTitle'),
+        message: translate('http.backendNotReadyMessage'),
       });
     }
 
@@ -52,7 +53,7 @@ http.interceptors.response.use(
   },
 );
 
-export function getErrorMessage(error: unknown, fallback = '请求失败'): string {
+export function getErrorMessage(error: unknown, fallback = translate('http.requestFailed')): string {
   if (error instanceof ApiError) {
     return error.detail;
   }

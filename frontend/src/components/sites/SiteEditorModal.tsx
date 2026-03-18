@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { createSite, updateSite } from '../../api/sites';
 import type { SiteResponse, SiteUpsertRequest } from '../../api/types';
+import { useI18n } from '../../i18n';
 import { useUiStore } from '../../store/ui';
 import { useWorkspaceStore } from '../../store/workspace';
 import { parseBasicSshCommand } from '../../utils/sshImport';
@@ -75,7 +76,8 @@ export function SiteEditorModal() {
   const pushToast = useUiStore((state) => state.pushToast);
   const setSelectedSiteName = useWorkspaceStore((state) => state.setSelectedSiteName);
   const [form, setForm] = useState<SiteFormState>(toFormState(null));
-  const [parseError, setParseError] = useState<string | null>(null);
+  const [parseError, setParseError] = useState(false);
+  const { formatAuthMethod, formatProtocol, t } = useI18n();
 
   const mutation = useMutation({
     mutationFn: async (payload: SiteUpsertRequest) => {
@@ -89,8 +91,8 @@ export function SiteEditorModal() {
       setSelectedSiteName(site.name);
       pushToast({
         tone: 'success',
-        title: siteEditor.site ? '站点已更新' : '站点已创建',
-        message: `${site.name} 已写入站点列表。`,
+        title: siteEditor.site ? t('siteEditor.toast.updated') : t('siteEditor.toast.created'),
+        message: t('siteEditor.toast.savedMessage', { siteName: site.name }),
       });
       closeSiteEditor();
     },
@@ -101,7 +103,7 @@ export function SiteEditorModal() {
       return;
     }
     setForm(toFormState(siteEditor.site));
-    setParseError(null);
+    setParseError(false);
   }, [siteEditor.open, siteEditor.site]);
 
   function patchForm(next: Partial<SiteFormState>) {
@@ -111,7 +113,7 @@ export function SiteEditorModal() {
   function handleParseCommand() {
     const parsed = parseBasicSshCommand(form.sshCommand);
     if (!parsed) {
-      setParseError('当前只支持基础 SSH 命令格式：ssh [-p PORT] [USER@]HOST');
+      setParseError(true);
       return;
     }
     patchForm({
@@ -120,20 +122,20 @@ export function SiteEditorModal() {
       username: parsed.username ?? form.username,
       name: form.name || parsed.name || form.name,
     });
-    setParseError(null);
+    setParseError(false);
   }
 
   return (
     <Modal
       open={siteEditor.open}
-      title={siteEditor.site ? 'Edit Site' : 'New Site'}
-      description="对齐后端字段与桌面版表单语义。"
+      title={siteEditor.site ? t('siteEditor.editTitle') : t('siteEditor.newTitle')}
+      description={t('siteEditor.description')}
       onClose={closeSiteEditor}
       width="wide"
       footer={
         <>
           <button type="button" className="ghost-button" onClick={closeSiteEditor}>
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -143,14 +145,14 @@ export function SiteEditorModal() {
               void mutation.mutateAsync(toPayload(form));
             }}
           >
-            {mutation.isPending ? 'Saving...' : 'Save'}
+            {mutation.isPending ? t('common.saving') : t('common.save')}
           </button>
         </>
       }
     >
       <form className="site-editor-grid" onSubmit={(event) => event.preventDefault()}>
         <section className="editor-section">
-          <div className="editor-section-title">Quick Import from SSH Command</div>
+          <div className="editor-section-title">{t('siteEditor.quickImport')}</div>
           <div className="inline-form-row">
             <input
               value={form.sshCommand}
@@ -158,23 +160,23 @@ export function SiteEditorModal() {
               placeholder="ssh -p 16921 root@example.com"
             />
             <button type="button" className="ghost-button" onClick={handleParseCommand}>
-              Parse
+              {t('common.parse')}
             </button>
           </div>
-          {parseError ? <p className="inline-error">{parseError}</p> : null}
+          {parseError ? <p className="inline-error">{t('siteEditor.parseError')}</p> : null}
         </section>
 
         <section className="editor-grid-two">
           <label className="form-field">
-            <span>Site Name</span>
+            <span>{t('siteEditor.siteName')}</span>
             <input value={form.name} onChange={(event) => patchForm({ name: event.target.value })} />
           </label>
           <label className="form-field">
-            <span>Host</span>
+            <span>{t('siteEditor.host')}</span>
             <input value={form.host} onChange={(event) => patchForm({ host: event.target.value })} />
           </label>
           <label className="form-field">
-            <span>Port</span>
+            <span>{t('siteEditor.port')}</span>
             <input
               type="number"
               min={1}
@@ -184,31 +186,31 @@ export function SiteEditorModal() {
             />
           </label>
           <label className="form-field">
-            <span>Username</span>
+            <span>{t('siteEditor.username')}</span>
             <input value={form.username} onChange={(event) => patchForm({ username: event.target.value })} />
           </label>
           <label className="form-field form-field-full">
-            <span>Remote Root</span>
+            <span>{t('siteEditor.remoteRoot')}</span>
             <input value={form.remoteRoot} onChange={(event) => patchForm({ remoteRoot: event.target.value })} />
           </label>
           <label className="form-field">
-            <span>Default Protocol</span>
+            <span>{t('siteEditor.defaultProtocol')}</span>
             <select
               value={form.defaultTransferProtocol}
               onChange={(event) => patchForm({ defaultTransferProtocol: event.target.value as 'sftp' | 'scp' })}
             >
-              <option value="sftp">sftp</option>
-              <option value="scp">scp</option>
+              <option value="sftp">{formatProtocol('sftp')}</option>
+              <option value="scp">{formatProtocol('scp')}</option>
             </select>
           </label>
           <label className="form-field">
-            <span>Auth Method</span>
+            <span>{t('siteEditor.authMethod')}</span>
             <select
               value={form.authMethod}
               onChange={(event) => patchForm({ authMethod: event.target.value as 'password' | 'key' })}
             >
-              <option value="password">password</option>
-              <option value="key">key</option>
+              <option value="password">{formatAuthMethod('password')}</option>
+              <option value="key">{formatAuthMethod('key')}</option>
             </select>
           </label>
         </section>
@@ -216,12 +218,12 @@ export function SiteEditorModal() {
         {form.authMethod === 'password' ? (
           <section className="editor-grid-two">
             <label className="form-field form-field-full">
-              <span>Password</span>
+              <span>{t('siteEditor.password')}</span>
               <input
                 type="password"
                 value={form.password}
                 onChange={(event) => patchForm({ password: event.target.value })}
-                placeholder={siteEditor.site?.has_password ? '已保存密码，留空则不覆盖' : '输入密码'}
+                placeholder={siteEditor.site?.has_password ? t('siteEditor.passwordPlaceholderSaved') : t('siteEditor.passwordPlaceholderNew')}
               />
             </label>
             <label className="checkbox-field form-field-full">
@@ -230,17 +232,17 @@ export function SiteEditorModal() {
                 checked={form.rememberPassword}
                 onChange={(event) => patchForm({ rememberPassword: event.target.checked })}
               />
-              <span>Remember Password</span>
+              <span>{t('siteEditor.rememberPassword')}</span>
             </label>
           </section>
         ) : (
           <section className="editor-grid-two">
             <label className="form-field form-field-full">
-              <span>Key Path</span>
+              <span>{t('siteEditor.keyPath')}</span>
               <input value={form.keyPath} onChange={(event) => patchForm({ keyPath: event.target.value })} />
             </label>
             <label className="form-field form-field-full">
-              <span>Key Passphrase</span>
+              <span>{t('siteEditor.keyPassphrase')}</span>
               <input
                 type="password"
                 value={form.keyPassphrase}
@@ -251,26 +253,26 @@ export function SiteEditorModal() {
         )}
 
         <details className="advanced-card">
-          <summary>Advanced</summary>
+          <summary>{t('siteEditor.advanced')}</summary>
           <div className="editor-grid-two advanced-grid">
             <label className="form-field form-field-full">
-              <span>Proxy Jump</span>
+              <span>{t('siteEditor.proxyJump')}</span>
               <input value={form.proxyJump} onChange={(event) => patchForm({ proxyJump: event.target.value })} />
             </label>
             <label className="form-field form-field-full">
-              <span>SSH Config Path</span>
+              <span>{t('siteEditor.sshConfigPath')}</span>
               <input
                 value={form.sshConfigPath}
                 onChange={(event) => patchForm({ sshConfigPath: event.target.value })}
               />
             </label>
             <label className="form-field form-field-full">
-              <span>SSH Options</span>
+              <span>{t('siteEditor.sshOptions')}</span>
               <textarea
                 rows={4}
                 value={form.sshOptionsText}
                 onChange={(event) => patchForm({ sshOptionsText: event.target.value })}
-                placeholder="每行一个选项，或使用逗号分隔"
+                placeholder={t('siteEditor.sshOptionsPlaceholder')}
               />
             </label>
           </div>

@@ -1,9 +1,10 @@
-import { useEffect } from 'react';
+﻿import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ApiError, getErrorMessage } from '../../api/http';
 import { createRemoteDirectory, deleteRemotePath, listRemoteFiles, renameRemotePath } from '../../api/remoteFiles';
 import type { RemoteEntry } from '../../api/types';
+import { useI18n } from '../../i18n';
 import { useUiStore } from '../../store/ui';
 import { useWorkspaceStore, type RemotePaneState } from '../../store/workspace';
 import { shortId } from '../../utils/format';
@@ -43,6 +44,7 @@ export function RemotePane({
   const toggleRemoteSelection = useWorkspaceStore((state) => state.toggleRemoteSelection);
   const openConfirm = useUiStore((state) => state.openConfirm);
   const pushToast = useUiStore((state) => state.pushToast);
+  const { t } = useI18n();
 
   const listingQuery = useQuery({
     queryKey: ['remote-list', pane.sessionId, pane.currentPath],
@@ -89,13 +91,13 @@ export function RemotePane({
     }
     const labels = selectedEntries.map((entry) => entry.path).join('\n');
     openConfirm({
-      title: '删除远端路径',
-      description: `将删除以下远端对象：\n${labels}`,
-      confirmLabel: '确认删除',
+      title: t('remotePane.deleteTitle'),
+      description: t('remotePane.deleteDescription', { labels }),
+      confirmLabel: t('remotePane.deleteConfirm'),
       destructive: true,
       onConfirm: async () => {
         await Promise.all(selectedEntries.map((entry) => deleteMutation.mutateAsync(entry.path)));
-        pushToast({ tone: 'success', title: '远端删除请求已提交' });
+        pushToast({ tone: 'success', title: t('remotePane.deleteToast') });
         await refreshListing();
       },
     });
@@ -107,15 +109,15 @@ export function RemotePane({
         <header className="panel-header remote-pane-header">
           <div>
             <h3>{pane.siteName}</h3>
-            <p className="mono-cell">{shortId(pane.sessionId)} · stale</p>
+            <p className="mono-cell">{t('common.session')} {shortId(pane.sessionId)} · {t('common.stale')}</p>
           </div>
           <button type="button" className="ghost-button" onClick={() => onCloseSession(pane.sessionId)}>
-            Close Pane
+            {t('remotePane.closePane')}
           </button>
         </header>
         <div className="table-state table-state-error">
-          <strong>Session 已失效</strong>
-          <p>后端已重启或该会话不存在。请从左侧重新打开站点，或直接关闭当前 pane。</p>
+          <strong>{t('remotePane.staleTitle')}</strong>
+          <p>{t('remotePane.staleBody')}</p>
         </div>
       </section>
     );
@@ -129,11 +131,11 @@ export function RemotePane({
       <header className="panel-header remote-pane-header">
         <div>
           <h3>{pane.siteName}</h3>
-          <p className="mono-cell">Session {shortId(pane.sessionId)}</p>
+          <p className="mono-cell">{t('common.session')} {shortId(pane.sessionId)}</p>
         </div>
         <div className="panel-actions wrap-actions">
           <StatusBadge tone={listingQuery.isFetching ? 'warning' : 'success'}>
-            {listingQuery.isFetching ? 'loading' : 'ready'}
+            {listingQuery.isFetching ? t('common.loading') : t('common.ready')}
           </StatusBadge>
           <button
             type="button"
@@ -148,26 +150,26 @@ export function RemotePane({
             ..
           </button>
           <button type="button" className="ghost-button" onClick={() => void refreshListing()}>
-            Refresh
+            {t('common.refresh')}
           </button>
           <button
             type="button"
             className="ghost-button"
             onClick={() => {
-              const name = window.prompt('输入新目录名');
+              const name = window.prompt(t('remotePane.createDirectoryPrompt'))?.trim();
               if (!name) {
                 return;
               }
               void mkdirMutation.mutateAsync({ path: joinRemotePath(pane.currentPath, name) }).then(() => {
-                pushToast({ tone: 'success', title: '远端目录已创建' });
+                pushToast({ tone: 'success', title: t('remotePane.createDirectoryToast') });
                 void refreshListing();
               });
             }}
           >
-            New Dir
+            {t('common.add')}
           </button>
           <button type="button" className="ghost-button" onClick={() => onCloseSession(pane.sessionId)}>
-            Close
+            {t('common.close')}
           </button>
         </div>
       </header>
@@ -181,7 +183,7 @@ export function RemotePane({
               setPanePath(pane.sessionId, pane.pathDraft.trim());
             }
           }}
-          placeholder="输入远端路径"
+          placeholder={t('remotePane.pathPlaceholder')}
         />
       </div>
 
@@ -192,7 +194,7 @@ export function RemotePane({
           onClick={() => void onQueueUploads(localSelection, pane.sessionId, pane.currentPath)}
           disabled={!localSelection.length}
         >
-          Upload Local Selection
+          {t('remotePane.uploadLocalSelection')}
         </button>
         <button
           type="button"
@@ -200,7 +202,7 @@ export function RemotePane({
           onClick={() => void onQueueDownloads(pane.sessionId, remoteSelection, localCurrentPath)}
           disabled={!remoteSelection.length || !localCurrentPath}
         >
-          Download Selection
+          {t('remotePane.downloadSelection')}
         </button>
         <button
           type="button"
@@ -210,7 +212,7 @@ export function RemotePane({
             if (!firstSelectedEntry) {
               return;
             }
-            const nextName = window.prompt('输入新的文件名或目录名', firstSelectedEntry.name);
+            const nextName = window.prompt(t('remotePane.renamePrompt'), firstSelectedEntry.name)?.trim();
             if (!nextName || nextName === firstSelectedEntry.name) {
               return;
             }
@@ -221,15 +223,15 @@ export function RemotePane({
                 newPath: joinRemotePath(currentDir, nextName),
               })
               .then(() => {
-                pushToast({ tone: 'success', title: '远端路径已重命名' });
+                pushToast({ tone: 'success', title: t('remotePane.renameToast') });
                 void refreshListing();
               });
           }}
         >
-          Rename
+          {t('common.rename')}
         </button>
         <button type="button" className="ghost-button danger-text" disabled={!selectedEntries.length} onClick={handleDelete}>
-          Delete
+          {t('common.delete')}
         </button>
       </div>
 
@@ -237,9 +239,9 @@ export function RemotePane({
         entries={listingQuery.data?.items ?? []}
         selectedPaths={remoteSelection}
         currentPath={listingQuery.data?.current_path || pane.currentPath}
-        emptyMessage="当前远端目录为空。"
+        emptyMessage={t('remotePane.empty')}
         isLoading={listingQuery.isPending}
-        errorMessage={listingQuery.error ? getErrorMessage(listingQuery.error, '无法读取远端目录') : null}
+        errorMessage={listingQuery.error ? getErrorMessage(listingQuery.error, t('remotePane.loadError')) : null}
         stale={pane.stale}
         onSelect={(path, multi) => toggleRemoteSelection(pane.sessionId, path, multi)}
         onActivate={(entry: RemoteEntry) => {

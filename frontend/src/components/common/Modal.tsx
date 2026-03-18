@@ -1,5 +1,7 @@
-import { type ReactNode } from 'react';
+﻿import { type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+
+import { useI18n } from '../../i18n';
 
 interface ModalProps {
   open: boolean;
@@ -20,6 +22,8 @@ export function Modal({
   footer,
   width = 'compact',
 }: ModalProps) {
+  const { t } = useI18n();
+
   if (!open) {
     return null;
   }
@@ -39,7 +43,7 @@ export function Modal({
             {description ? <p>{description}</p> : null}
           </div>
           <button type="button" className="ghost-button" onClick={onClose}>
-            关闭
+            {t('common.close')}
           </button>
         </header>
         <div className="modal-body">{children}</div>

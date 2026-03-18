@@ -1,10 +1,11 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { getErrorMessage } from '../../api/http';
 import { checkConnection, closeSession, listSessions, openSession } from '../../api/sessions';
 import { deleteSite, listSites } from '../../api/sites';
-import type { SiteResponse } from '../../api/types';
+import type { ConnectionCheckResult, SiteResponse } from '../../api/types';
+import { useI18n } from '../../i18n';
 import { useTasksStore } from '../../store/tasks';
 import { useUiStore } from '../../store/ui';
 import { useWorkspaceStore } from '../../store/workspace';
@@ -32,7 +33,8 @@ export function SiteSidebar() {
   const pushToast = useUiStore((state) => state.pushToast);
   const tasks = useTasksStore((state) => state.items);
   const [secretRequest, setSecretRequest] = useState<SecretRequestState | null>(null);
-  const [connectionResult, setConnectionResult] = useState<string[]>([]);
+  const [connectionResult, setConnectionResult] = useState<ConnectionCheckResult[]>([]);
+  const { formatProtocol, t } = useI18n();
 
   const sitesQuery = useQuery({
     queryKey: ['sites'],
@@ -62,10 +64,10 @@ export function SiteSidebar() {
       password: payload?.password || null,
       key_passphrase: payload?.keyPassphrase || null,
     });
-    setConnectionResult(result.results.map((item) => `${item.passed ? 'OK' : 'FAIL'} · ${item.name} · ${item.message}`));
+    setConnectionResult(result.results);
     pushToast({
       tone: result.all_passed ? 'success' : 'warning',
-      title: `连接检查完成: ${site.name}`,
+      title: t('siteSidebar.toast.checkComplete', { siteName: site.name }),
     });
   }
 
@@ -79,8 +81,11 @@ export function SiteSidebar() {
     await queryClient.invalidateQueries({ queryKey: ['sessions'] });
     pushToast({
       tone: 'success',
-      title: '远端会话已打开',
-      message: `${session.site_name} · ${shortId(session.session_id)}`,
+      title: t('siteSidebar.toast.sessionOpened'),
+      message: t('siteSidebar.toast.sessionOpenedMessage', {
+        siteName: session.site_name,
+        sessionId: shortId(session.session_id),
+      }),
     });
   }
 
@@ -88,7 +93,7 @@ export function SiteSidebar() {
     await closeSessionMutation.mutateAsync({ session_id: sessionId });
     closePane(sessionId);
     await queryClient.invalidateQueries({ queryKey: ['sessions'] });
-    pushToast({ tone: 'success', title: '远端会话已关闭' });
+    pushToast({ tone: 'success', title: t('siteSidebar.toast.sessionClosed') });
   }
 
   function requestCloseSession(sessionId: string) {
@@ -100,9 +105,9 @@ export function SiteSidebar() {
       return;
     }
     openConfirm({
-      title: '关闭仍有关联任务的 Session',
-      description: `Session ${shortId(sessionId)} 仍有关联中的任务。继续关闭会让当前 pane 失去上下文。`,
-      confirmLabel: '继续关闭',
+      title: t('siteSidebar.confirm.closeSessionTitle'),
+      description: t('siteSidebar.confirm.closeSessionDescription', { sessionId: shortId(sessionId) }),
+      confirmLabel: t('siteSidebar.confirm.closeSession'),
       destructive: true,
       onConfirm: () => closeSingleSession(sessionId),
     });
@@ -111,9 +116,12 @@ export function SiteSidebar() {
   function requestDeleteSite(site: SiteResponse) {
     const affectedPanes = panes.filter((pane) => pane.siteName === site.name).map((pane) => pane.sessionId);
     openConfirm({
-      title: `删除站点 ${site.name}`,
-      description: `将删除站点 ${site.name}，并关闭 ${affectedPanes.length} 个引用它的当前会话。`,
-      confirmLabel: '删除站点',
+      title: t('siteSidebar.confirm.deleteSiteTitle', { siteName: site.name }),
+      description: t('siteSidebar.confirm.deleteSiteDescription', {
+        siteName: site.name,
+        count: affectedPanes.length,
+      }),
+      confirmLabel: t('siteSidebar.confirm.deleteSite'),
       destructive: true,
       onConfirm: async () => {
         await deleteSiteMutation.mutateAsync(site.name);
@@ -123,7 +131,7 @@ export function SiteSidebar() {
         }
         await queryClient.invalidateQueries({ queryKey: ['sites'] });
         await queryClient.invalidateQueries({ queryKey: ['sessions'] });
-        pushToast({ tone: 'success', title: `站点 ${site.name} 已删除` });
+        pushToast({ tone: 'success', title: t('siteSidebar.toast.siteDeleted', { siteName: site.name }) });
       },
     });
   }
@@ -144,15 +152,15 @@ export function SiteSidebar() {
     <aside className="panel-shell sidebar-shell">
       <header className="panel-header">
         <div>
-          <h3>Sites / Sessions</h3>
-          <p>左侧主操作区，保留站点管理与全局控制。</p>
+          <h3>{t('siteSidebar.title')}</h3>
+          <p>{t('siteSidebar.description')}</p>
         </div>
       </header>
 
       <section className="sidebar-section">
         <div className="inline-actions wrap-actions">
           <button type="button" className="primary-button" onClick={() => openSiteEditor(null)}>
-            Add
+            {t('common.add')}
           </button>
           <button
             type="button"
@@ -160,7 +168,7 @@ export function SiteSidebar() {
             disabled={!selectedSite}
             onClick={() => openSiteEditor(selectedSite)}
           >
-            Edit
+            {t('common.edit')}
           </button>
           <button
             type="button"
@@ -172,7 +180,7 @@ export function SiteSidebar() {
               }
             }}
           >
-            Remove
+            {t('common.remove')}
           </button>
           <button
             type="button"
@@ -189,7 +197,7 @@ export function SiteSidebar() {
               void handleCheck(selectedSite);
             }}
           >
-            Check
+            {t('common.check')}
           </button>
           <button
             type="button"
@@ -206,7 +214,7 @@ export function SiteSidebar() {
               void handleOpenSession(selectedSite);
             }}
           >
-            Open Session
+            {t('siteSidebar.secretOpenSubmit')}
           </button>
           <button
             type="button"
@@ -218,25 +226,25 @@ export function SiteSidebar() {
               }
             }}
           >
-            Close Session
+            {t('siteSidebar.closeSession')}
           </button>
         </div>
       </section>
 
       <section className="sidebar-section">
         <label className="form-field">
-          <span>Task Protocol Override</span>
+          <span>{t('siteSidebar.protocolOverride')}</span>
           <select value={protocolOverride} onChange={(event) => setProtocolOverride(event.target.value as 'auto' | 'sftp' | 'scp')}>
-            <option value="auto">Auto</option>
-            <option value="sftp">SFTP</option>
-            <option value="scp">SCP</option>
+            <option value="auto">{formatProtocol('auto')}</option>
+            <option value="sftp">{formatProtocol('sftp')}</option>
+            <option value="scp">{formatProtocol('scp')}</option>
           </select>
         </label>
       </section>
 
       <section className="sidebar-section">
         <div className="sidebar-title-row">
-          <strong>Sites</strong>
+          <strong>{t('siteSidebar.sites')}</strong>
           <StatusBadge tone="neutral">{sitesQuery.data?.total?.toString() || '0'}</StatusBadge>
         </div>
         <div className="sidebar-list">
@@ -257,24 +265,24 @@ export function SiteSidebar() {
       {selectedSite ? (
         <section className="sidebar-section site-summary">
           <div className="sidebar-title-row">
-            <strong>Selected Site</strong>
-            <StatusBadge tone="info">{selectedSite.default_transfer_protocol}</StatusBadge>
+            <strong>{t('siteSidebar.selectedSite')}</strong>
+            <StatusBadge tone="info">{formatProtocol(selectedSite.default_transfer_protocol)}</StatusBadge>
           </div>
           <p>{selectedSite.username}@{selectedSite.host}:{selectedSite.port}</p>
           <p className="mono-cell">{selectedSite.remote_root}</p>
           <p className="sidebar-help">
             {selectedSite.auth_method === 'password'
               ? selectedSite.has_password
-                ? '后端已保存密码，可直接开会话。'
-                : '密码未保存，打开或检查时会要求输入运行时密码。'
-              : '使用私钥认证，密钥路径与高级 SSH 选项保存在站点配置中。'}
+                ? t('siteSidebar.authSummarySavedPassword')
+                : t('siteSidebar.authSummaryRuntimePassword')
+              : t('siteSidebar.authSummaryKey')}
           </p>
         </section>
       ) : null}
 
       <section className="sidebar-section">
         <div className="sidebar-title-row">
-          <strong>Open Sessions</strong>
+          <strong>{t('siteSidebar.openSessions')}</strong>
           <StatusBadge tone="neutral">{sessionsQuery.data?.total?.toString() || '0'}</StatusBadge>
         </div>
         <div className="sidebar-list">
@@ -285,7 +293,7 @@ export function SiteSidebar() {
                 <span className="sidebar-meta mono-cell">{shortId(session.session_id)} · {session.remote_root}</span>
               </button>
               <button type="button" className="row-action" onClick={() => requestCloseSession(session.session_id)}>
-                关
+                {t('common.close')}
               </button>
             </div>
           ))}
@@ -295,25 +303,31 @@ export function SiteSidebar() {
       {connectionResult.length ? (
         <section className="sidebar-section result-card">
           <div className="sidebar-title-row">
-            <strong>Connection Result</strong>
+            <strong>{t('siteSidebar.connectionResult')}</strong>
           </div>
-          {connectionResult.map((line) => (
-            <p key={line}>{line}</p>
+          {connectionResult.map((item) => (
+            <p key={`${item.name}-${item.message}`}>
+              {t('siteSidebar.connectionLine', {
+                status: item.passed ? t('common.ok') : t('common.fail'),
+                name: item.name,
+                message: item.message,
+              })}
+            </p>
           ))}
         </section>
       ) : null}
 
-      {(sitesQuery.error || sessionsQuery.error) ? (
+      {sitesQuery.error || sessionsQuery.error ? (
         <section className="sidebar-section inline-error">
-          {getErrorMessage(sitesQuery.error || sessionsQuery.error, '站点侧栏加载失败')}
+          {getErrorMessage(sitesQuery.error || sessionsQuery.error, t('siteSidebar.loadError'))}
         </section>
       ) : null}
 
       <SecretPromptDialog
         open={Boolean(secretRequest)}
         site={secretRequest?.site ?? null}
-        title={secretRequest?.mode === 'check' ? '运行时凭据: 连接检查' : '运行时凭据: 打开会话'}
-        submitLabel={secretRequest?.mode === 'check' ? '开始检查' : '打开会话'}
+        title={secretRequest?.mode === 'check' ? t('siteSidebar.secretCheckTitle') : t('siteSidebar.secretOpenTitle')}
+        submitLabel={secretRequest?.mode === 'check' ? t('siteSidebar.secretCheckSubmit') : t('siteSidebar.secretOpenSubmit')}
         onClose={() => setSecretRequest(null)}
         onSubmit={handleSecretSubmit}
       />

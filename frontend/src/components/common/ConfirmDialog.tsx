@@ -1,5 +1,6 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 
+import { useI18n } from '../../i18n';
 import { useUiStore } from '../../store/ui';
 import { Modal } from './Modal';
 
@@ -7,6 +8,7 @@ export function ConfirmDialog() {
   const confirm = useUiStore((state) => state.confirm);
   const closeConfirm = useUiStore((state) => state.closeConfirm);
   const [submitting, setSubmitting] = useState(false);
+  const { t } = useI18n();
 
   async function handleConfirm() {
     if (!confirm.onConfirm) {
@@ -35,7 +37,7 @@ export function ConfirmDialog() {
       footer={
         <>
           <button type="button" className="ghost-button" onClick={closeConfirm} disabled={submitting}>
-            取消
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -45,7 +47,7 @@ export function ConfirmDialog() {
             }}
             disabled={submitting}
           >
-            {submitting ? '处理中...' : confirm.confirmLabel}
+            {submitting ? t('common.processing') : confirm.confirmLabel || t('common.confirm')}
           </button>
         </>
       }

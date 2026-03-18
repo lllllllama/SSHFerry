@@ -1,8 +1,9 @@
-import { useEffect } from 'react';
+﻿import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { getAuthSession, getHealth } from '../api/auth';
 import { getErrorMessage } from '../api/http';
+import { translate } from '../i18n';
 import { useAuthStore } from '../store/auth';
 
 export function useBackendSession() {
@@ -16,7 +17,7 @@ export function useBackendSession() {
     queryFn: async () => {
       const health = await getHealth();
       if (!health.ready) {
-        throw new Error(health.startup_error || '本地后端尚未完成启动。');
+        throw new Error(health.startup_error || translate('http.backendStartupIncomplete'));
       }
       const session = await getAuthSession();
       return { health, session };
@@ -43,7 +44,7 @@ export function useBackendSession() {
     if (!query.error) {
       return;
     }
-    setInitError(getErrorMessage(query.error, '初始化失败'));
+    setInitError(getErrorMessage(query.error, translate('http.initFailed')));
   }, [query.error, setInitError]);
 
   return query;

@@ -1,8 +1,9 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 
 import type { TransferDragPayload } from '../../api/types';
 import { getTransferDragMime } from '../../api/ws';
-import { formatBytes, formatTimestamp } from '../../utils/format';
+import { useI18n } from '../../i18n';
+import { formatBytes } from '../../utils/format';
 
 interface FileLike {
   name: string;
@@ -53,6 +54,7 @@ export function FileTable<T extends FileLike>(props: FileTableProps<T>) {
     onDropTransfer,
   } = props;
   const [hoveredPath, setHoveredPath] = useState<string | null>(null);
+  const { formatDateTime, t } = useI18n();
 
   function handleDrop(event: React.DragEvent<HTMLElement>, targetPath: string) {
     if (!onDropTransfer) {
@@ -69,13 +71,13 @@ export function FileTable<T extends FileLike>(props: FileTableProps<T>) {
   }
 
   if (isLoading) {
-    return <div className="table-state">正在加载目录...</div>;
+    return <div className="table-state">{t('common.loadingDirectory')}</div>;
   }
 
   if (errorMessage) {
     return (
       <div className="table-state table-state-error">
-        <strong>{stale ? 'Session Stale' : '目录加载失败'}</strong>
+        <strong>{stale ? t('common.stale') : t('common.directoryLoadFailed')}</strong>
         <p>{errorMessage}</p>
       </div>
     );
@@ -101,9 +103,9 @@ export function FileTable<T extends FileLike>(props: FileTableProps<T>) {
       <table className="file-table">
         <thead>
           <tr>
-            <th>名称</th>
-            <th>大小</th>
-            <th>修改时间</th>
+            <th>{t('common.name')}</th>
+            <th>{t('common.size')}</th>
+            <th>{t('common.modified')}</th>
           </tr>
         </thead>
         <tbody>
@@ -166,7 +168,7 @@ export function FileTable<T extends FileLike>(props: FileTableProps<T>) {
                   <span>{entry.name}</span>
                 </td>
                 <td>{entry.is_dir ? '--' : formatBytes(entry.size)}</td>
-                <td>{formatTimestamp(entry.mtime)}</td>
+                <td>{formatDateTime(entry.mtime)}</td>
               </tr>
             );
           })}

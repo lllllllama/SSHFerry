@@ -1,5 +1,6 @@
-import { Link, useLocation } from 'react-router-dom';
+﻿import { Link, useLocation } from 'react-router-dom';
 
+import { useI18n } from '../../i18n';
 import { useAuthStore } from '../../store/auth';
 import { useTasksStore } from '../../store/tasks';
 import { useUiStore } from '../../store/ui';
@@ -23,39 +24,56 @@ export function AppTopBar() {
   const health = useAuthStore((state) => state.health);
   const socketStatus = useTasksStore((state) => state.socketStatus);
   const protocolOverride = useUiStore((state) => state.protocolOverride);
+  const { formatProtocol, formatSocketStatus, language, setLanguage, t } = useI18n();
 
   return (
     <header className="topbar">
       <div className="topbar-brand">
         <strong>SSHFerry</strong>
-        <span>本地化多会话传输工作台</span>
+        <span>{t('topbar.tagline')}</span>
       </div>
       <div className="topbar-statuses">
         <div className="topbar-status-item">
-          <span>Backend</span>
+          <span>{t('topbar.backend')}</span>
           <StatusBadge tone={health?.ready ? 'success' : 'warning'}>
-            {health?.ready ? 'Ready' : 'Booting'}
+            {health?.ready ? t('common.ready') : t('common.booting')}
           </StatusBadge>
         </div>
         <div className="topbar-status-item">
-          <span>Task WS</span>
-          <StatusBadge tone={getSocketTone(socketStatus)}>{socketStatus}</StatusBadge>
+          <span>{t('topbar.taskChannel')}</span>
+          <StatusBadge tone={getSocketTone(socketStatus)}>{formatSocketStatus(socketStatus)}</StatusBadge>
         </div>
         <div className="topbar-status-item">
-          <span>Protocol</span>
-          <StatusBadge tone={protocolOverride === 'auto' ? 'neutral' : 'info'}>
-            {protocolOverride.toUpperCase()}
-          </StatusBadge>
+          <span>{t('topbar.protocol')}</span>
+          <StatusBadge tone={protocolOverride === 'auto' ? 'neutral' : 'info'}>{formatProtocol(protocolOverride)}</StatusBadge>
         </div>
       </div>
-      <nav className="topbar-nav">
-        <Link className={location.pathname === '/workspace' ? 'nav-link active' : 'nav-link'} to="/workspace">
-          Workspace
-        </Link>
-        <Link className={location.pathname === '/tasks' ? 'nav-link active' : 'nav-link'} to="/tasks">
-          Tasks
-        </Link>
-      </nav>
+      <div className="topbar-controls">
+        <div className="locale-switch" role="group" aria-label={t('topbar.language')}>
+          <button
+            type="button"
+            className={`locale-button ${language === 'zh' ? 'is-active' : ''}`}
+            onClick={() => setLanguage('zh')}
+          >
+            {t('language.zh')}
+          </button>
+          <button
+            type="button"
+            className={`locale-button ${language === 'en' ? 'is-active' : ''}`}
+            onClick={() => setLanguage('en')}
+          >
+            {t('language.en')}
+          </button>
+        </div>
+        <nav className="topbar-nav">
+          <Link className={location.pathname === '/workspace' ? 'nav-link active' : 'nav-link'} to="/workspace">
+            {t('nav.workspace')}
+          </Link>
+          <Link className={location.pathname === '/tasks' ? 'nav-link active' : 'nav-link'} to="/tasks">
+            {t('nav.tasks')}
+          </Link>
+        </nav>
+      </div>
     </header>
   );
 }
