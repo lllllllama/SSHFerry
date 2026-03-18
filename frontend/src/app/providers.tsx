@@ -1,0 +1,39 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { RouterProvider } from 'react-router-dom';
+
+import { ConfirmDialog } from '../components/common/ConfirmDialog';
+import { ToastViewport } from '../components/common/ToastViewport';
+import { useBackendSession } from '../hooks/useBackendSession';
+import { useTaskSocket } from '../hooks/useTaskSocket';
+import { useWorkspaceBootstrap } from '../hooks/useWorkspaceBootstrap';
+import { router } from './router';
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+    mutations: {
+      retry: 0,
+    },
+  },
+});
+
+function AppRuntime() {
+  useBackendSession();
+  useWorkspaceBootstrap();
+  useTaskSocket();
+  return null;
+}
+
+export function AppProviders() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AppRuntime />
+      <RouterProvider router={router} />
+      <ConfirmDialog />
+      <ToastViewport />
+    </QueryClientProvider>
+  );
+}

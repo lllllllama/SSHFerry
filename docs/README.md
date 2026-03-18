@@ -5,7 +5,7 @@
 ## Structure
 
 - `frontend/`
-  - React 前端开发、联调、构建和接口对接文档
+  - React 前端开发、联调、构建、交互设计和接口对接文档
 - `backend/`
   - FastAPI 后端迁移、规划和实现说明
 - `architecture/`
@@ -15,8 +15,19 @@
 
 - [Frontend Build Guide](./frontend/FRONTEND_BUILD.md)
 - [Frontend API Guide](./frontend/FRONTEND_API.md)
+- [Frontend Design Specification](./frontend/Frontend-Design.md)
 - [Backend TODO](./backend/BACKEND_TODO.md)
 - [Historical Architecture Note](./architecture/agent.md)
+
+## Frontend Reading Order
+
+建议前端开发按这个顺序读：
+
+1. [Frontend Build Guide](./frontend/FRONTEND_BUILD.md)
+2. [Frontend API Guide](./frontend/FRONTEND_API.md)
+3. [Frontend Design Specification](./frontend/Frontend-Design.md)
+
+这样可以先确认工程约束，再确认接口契约，最后落具体交互和页面语义。
 
 ## Notes
 

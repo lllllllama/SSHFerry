@@ -13,8 +13,9 @@
 
 配套文档：
 
-- 接口说明见 [FRONTEND_API.md](./FRONTEND_API.md)
-- 后端迁移规划见 [BACKEND_TODO.md](../backend/BACKEND_TODO.md)
+- [FRONTEND_API.md](./FRONTEND_API.md)
+- [Frontend-Design.md](./Frontend-Design.md)
+- [BACKEND_TODO.md](../backend/BACKEND_TODO.md)
 
 ## Fixed Decisions
 
@@ -51,6 +52,20 @@
 
 后续 React 前端如果缺掉这些语义，就不能算“符合源程序”。
 
+## Route Plan
+
+第一阶段建议只保留少量明确路由：
+
+- `/`：启动页。完成健康检查、鉴权初始化和首次重定向。
+- `/workspace`：主工作区。包含站点侧栏、本地面板、多远端工作区、底部任务区。
+- `/tasks`：任务中心全屏视图。复用与工作区底部同一套任务数据和操作逻辑。
+
+说明：
+
+- `Site Editor` 不单独做页面，做成 modal 或 drawer。
+- `Log Area` 第一阶段可以只保留占位与结构，不要求做完整能力。
+- 如果后续需要深链接远端 session，再追加查询参数，不在第一阶段提前复杂化。
+
 ## Proposed Directory Layout
 
 当前仓库还没有前端目录。开始开发时，目录按这个结构创建：
@@ -68,7 +83,6 @@ frontend/
     app/
       router.tsx
       providers.tsx
-      store.ts
     api/
       http.ts
       auth.ts
@@ -79,8 +93,13 @@ frontend/
       tasks.ts
       ws.ts
       types.ts
+    store/
+      auth.ts
+      ui.ts
+      workspace.ts
+      tasks.ts
     pages/
-      sites/
+      bootstrap/
       workspace/
       tasks/
     components/
@@ -94,7 +113,11 @@ frontend/
     hooks/
       useBackendSession.ts
       useTaskSocket.ts
-      useRemoteSession.ts
+      useWorkspaceBootstrap.ts
+    utils/
+      format.ts
+      paths.ts
+      sshImport.ts
     styles/
       index.css
       tokens.css
@@ -159,7 +182,7 @@ python -m backend.app.main
 
 不要反过来先打业务接口，否则会被 `401` 拦住。
 
-## Frontend App Flow
+## Frontend App Bootstrap
 
 前端启动时建议这样分层：
 
@@ -170,10 +193,43 @@ python -m backend.app.main
    - 请求 `/api/health`
    - 请求 `/api/auth/session`
    - 将 token 写入全局请求客户端
-3. 进入应用主界面
-4. `useTaskSocket.ts`
+3. `useWorkspaceBootstrap.ts`
+   - 并行拉取 `/api/sites`、`/api/sessions`、`/api/local-files/drives`
+   - 为工作区挑一个默认本地路径
+4. 进入应用主界面
+5. `useTaskSocket.ts`
    - 建立任务 websocket
    - 接收任务快照并同步到 store
+
+## State Ownership
+
+这一段必须固定，不然后面很容易把状态写乱。
+
+### React Query 负责
+
+- `/api/sites`
+- `/api/sessions`
+- `/api/local-files/drives`
+- 当前本地目录列表
+- 每个远端 pane 的当前目录列表
+- 连接检查、打开会话、文件操作、任务控制等 mutation
+
+### Zustand 负责
+
+- 本地 token 与后端初始化状态
+- 当前全局协议覆盖器 `Auto/SFTP/SCP`
+- 左侧当前选中站点
+- 工作区 pane 布局、pane 顺序、pane 宽度
+- 当前本地面板选中项
+- 每个远端 pane 的选中项
+- 任务中心排序、筛选、是否展开底部区域
+- 全局 toast、确认框、modal 开关状态
+
+### 不要这样做
+
+- 不要把任务快照既放 React Query 又放 Zustand 两份长期真相源
+- 不要在组件内部直接持有后端地址、token、session 映射这类全局状态
+- 不要为了省事把整个应用状态塞进一个巨型 store
 
 ## HTTP Client Rules
 
@@ -181,7 +237,7 @@ python -m backend.app.main
 
 规则固定如下：
 
-- baseURL 来自 `VITE_BACKEND_HTTP_URL`
+- `baseURL` 来自 `VITE_BACKEND_HTTP_URL`
 - 所有业务接口自动加 `X-SSHFerry-Token`
 - `401` 统一提示“本地后端会话失效，需要重新初始化”
 - `503` 统一提示“后端未就绪或依赖缺失”
@@ -238,9 +294,12 @@ ws://127.0.0.1:18080/api/ws/tasks?token=...
 - `Auth Method`
 - `Password` / `Key Path` / `Key Passphrase`
 - `Remember Password`
+- `Proxy Jump`
+- `SSH Config Path`
+- `SSH Options`
 - `Quick Import from SSH Command`
 
-不要把站点页简化成只剩几个字段，否则会明显低于原程序能力。
+不要把站点页简化成只剩几个字段，否则会明显低于当前后端可承载能力。
 
 ### 3. Local File Panel
 
@@ -253,8 +312,6 @@ ws://127.0.0.1:18080/api/ws/tasks?token=...
 - 文件列表多选
 - 拖拽接收远端下载
 
-这意味着前端不能只做一个“选择文件上传”按钮。必须保留“本地文件浏览器”的产品语义。
-
 ### 4. Remote Workspace
 
 远端区域必须按“多 session 工作区”设计，而不是单个远端面板。
@@ -264,10 +321,8 @@ ws://127.0.0.1:18080/api/ws/tasks?token=...
 - 同时打开多个远端 session
 - 并排显示多个远端面板
 - 每个面板独立刷新、返回上级、关闭
-- 每个面板内切换站点或 session 上下文
+- 每个面板独立选中项和当前路径
 - 远端到远端拖拽互传
-
-建议实现上用 `split panes` 或可关闭标签页加多列布局，但结果语义必须和原桌面版一致：能在一个窗口里同时看多个远端工作区。
 
 ### 5. Task Center
 
@@ -280,30 +335,58 @@ ws://127.0.0.1:18080/api/ws/tasks?token=...
 - 按任务状态排序
 - 文件夹任务显示子任务进度
 
-后端 websocket 已经能提供实时快照，前端应直接把它用于任务中心。
-
 ### 6. Log Area
 
 原桌面版底部右侧还有日志区。这个可以放到前端第二阶段，但文档里必须保留它，不要在设计上把它永久删掉。
 
-## Suggested First Screens
+## Implementation Contracts
 
-第一阶段建议只做 3 个主屏，但屏内信息不要缩水：
+实现时请直接按下面的契约落，不要各做各的理解。
 
-1. `Sites / Session Sidebar`
-   - 站点管理
-   - 会话打开关闭
-   - 全局协议覆盖器
+### 全局协议覆盖器
 
-2. `Workspace`
-   - 左侧本地文件面板
-   - 右侧多远端 session 工作区
-   - 支持拖拽创建任务
+- UI 值只有 `Auto`、`SFTP`、`SCP`
+- 提交任务时：
+  - `Auto` -> 请求体 `engine='auto'`
+  - `SFTP` -> 请求体 `engine='sftp'`
+  - `SCP` -> 请求体 `engine='scp'`
+- 前端不要自行推导 `parallel`
+- 任务返回后，以后端回传的 `task.engine` 为最终展示值
 
-3. `Tasks`
-   - 任务中心
-   - 实时 websocket 同步
-   - 第二阶段再补日志区
+### 多选与批量任务创建
+
+当前任务创建接口一次只接收一个源路径，因此前端批量拖拽或批量按钮操作时必须自行拆分调用：
+
+- 多选本地条目上传：每个顶层条目创建一个任务
+- 多选远端条目下载：每个顶层条目创建一个任务
+- 多选远端条目互传：每个顶层条目创建一个任务
+- 目录条目仍然只创建一个 `folder_transfer` 任务，由后端展开内部进度
+
+### 失败处理边界
+
+当前后端没有“覆盖策略协商”接口，因此第一阶段不要自己发明复杂的预检流程：
+
+- 目标已存在、权限不足、依赖缺失等问题，先按接口错误或任务失败状态展示
+- 客户端只负责明确展示失败原因，不额外伪造成功态
+- destructive 动作仍然要在前端先确认
+
+### SSH 命令快速导入
+
+第一阶段前端直接在本地实现解析，不需要新后端接口。具体规则见 [Frontend-Design.md](./Frontend-Design.md)。
+
+## Suggested Feature Slices
+
+按下面顺序切功能，返工最少：
+
+1. 启动页、健康检查、token 初始化
+2. 站点列表与站点编辑器
+3. 打开会话和多 pane 工作区骨架
+4. 本地目录浏览
+5. 远端目录浏览
+6. 上传、下载、远端互传
+7. 任务中心 + websocket
+8. 删除、重命名、新建目录等远端操作
+9. 日志区占位与桌面壳衔接
 
 ## API-to-UI Mapping
 
@@ -314,7 +397,7 @@ ws://127.0.0.1:18080/api/ws/tasks?token=...
 - 打开/关闭远端会话：`/api/sessions/open` / `/api/sessions/close`
 - 本地文件树：`/api/local-files/drives` / `/api/local-files/list`
 - 远端文件树：`/api/remote-files/list`
-- 文件操作：`/api/remote-files/mkdir` / `/api/remote-files/rename` / `/api/remote-files/delete`
+- 远端文件操作：`/api/remote-files/mkdir` / `/api/remote-files/rename` / `/api/remote-files/delete`
 - 任务创建：`/api/tasks/upload` / `/api/tasks/download` / `/api/tasks/remote-copy`
 - 任务控制：`/api/tasks/{task_id}/pause` 等
 - 任务实时更新：`/api/ws/tasks`
@@ -331,12 +414,14 @@ frontend/src/api/types.ts
 
 - `HealthResponse`
 - `AuthSessionResponse`
+- `SiteUpsertRequest`
 - `SiteResponse`
 - `SessionResponse`
 - `LocalEntry`
 - `RemoteEntry`
 - `TaskItem`
 - `TaskSnapshotMessage`
+- `TaskActionResponse`
 
 原则：
 
@@ -391,6 +476,7 @@ frontend/dist
 9. 前端能创建上传、下载、远端互传任务
 10. 前端能切换全局传输协议覆盖器并影响任务创建
 11. 前端能收到 websocket 任务快照
+12. 前端能处理 session 失效、权限不足、后端未就绪这三类失败路径
 
 ## Definition Of Done For Frontend Phase 1
 
@@ -400,12 +486,12 @@ frontend/dist
 - 能从 SSH 命令快速导入站点
 - 能打开多个远端会话并同时显示
 - 能浏览本地目录和远端目录
-- 能创建上传、下载、远端互传任务
+- 能通过拖拽或按钮创建上传、下载、远端互传任务
 - 能切换全局协议覆盖器
 - 能在任务中心实时看到任务变化
 - 能做暂停、恢复、取消、重启、清空已完成
-
-只要这 8 条打通，前端主链路才算真正对齐原桌面版。
+- 能对删除站点、删除远端目录这类破坏性动作做确认
+- 能正确处理后端重启导致的 session 失效
 
 ## Current Risks
 
@@ -417,6 +503,8 @@ frontend/dist
 - 把远端工作区做成单 session 视图，丢掉原程序多远端并排能力
 - 忽略全局协议覆盖器，只保留站点默认协议
 - 把本地文件面板简化成上传按钮，丢掉文件浏览器语义
+- 忽略 `proxy_jump`、`ssh_config_path`、`ssh_options` 这类后端已经可承载的字段
+- 批量拖拽时忘记把多选拆成多次任务创建请求
 - 过早引入复杂 UI 库，拖慢第一版联调
 
 ## Recommendation
@@ -427,7 +515,7 @@ frontend/dist
 2. 起 `Vite + React + TypeScript`
 3. 先接 `/api/health` 和 `/api/auth/session`
 4. 先做站点侧边栏、本地文件面板、多远端工作区、任务中心
-5. 最后再补日志区和桌面壳细节
+5. 严格按 [Frontend-Design.md](./Frontend-Design.md) 落交互
+6. 最后再补日志区和桌面壳细节
 
 这样推进速度最快，也最不容易做偏。
-

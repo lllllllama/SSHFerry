@@ -69,3 +69,16 @@ pip-wheel-metadata/
 # OS files
 .DS_Store
 Thumbs.db
+
+docs/
+!docs/
+!docs/frontend/
+!docs/frontend/Frontend-Design.md
+
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+!frontend/.env.development
+!frontend/.env.production

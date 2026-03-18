@@ -1,0 +1,30 @@
+:root {
+  color-scheme: light;
+  --bg-canvas: #e8e2d7;
+  --bg-app: linear-gradient(180deg, #f1ece3 0%, #e4ddd1 100%);
+  --bg-panel: rgba(255, 252, 247, 0.92);
+  --bg-panel-strong: #fffdf9;
+  --bg-rail: #dcd4c7;
+  --bg-highlight: #d6e1e4;
+  --line-soft: rgba(53, 63, 68, 0.12);
+  --line-strong: rgba(53, 63, 68, 0.24);
+  --text-main: #22313a;
+  --text-soft: #5f6d74;
+  --text-muted: #78858b;
+  --accent: #2f6477;
+  --accent-soft: rgba(47, 100, 119, 0.14);
+  --accent-strong: #214857;
+  --warning: #a56b22;
+  --warning-soft: rgba(165, 107, 34, 0.14);
+  --danger: #a1483f;
+  --danger-soft: rgba(161, 72, 63, 0.12);
+  --success: #2f6e4d;
+  --success-soft: rgba(47, 110, 77, 0.12);
+  --shadow-soft: 0 10px 30px rgba(69, 57, 40, 0.08);
+  --shadow-strong: 0 18px 40px rgba(56, 46, 32, 0.12);
+  --radius-lg: 18px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+  --font-sans: 'IBM Plex Sans', 'Noto Sans SC', 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Cascadia Mono', 'Consolas', monospace;
+}
