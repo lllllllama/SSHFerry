@@ -4,6 +4,8 @@ import { RemotePane } from './RemotePane';
 
 interface RemoteWorkspaceProps {
   panes: RemotePaneState[];
+  emptyTitle?: string;
+  emptyBody?: string;
   onCloseSession: (sessionId: string) => void;
   onQueueUploads: (localPaths: string[], sessionId: string, targetDir: string) => void | Promise<void>;
   onQueueDownloads: (sessionId: string, remotePaths: string[], targetDir: string) => void | Promise<void>;
@@ -17,6 +19,8 @@ interface RemoteWorkspaceProps {
 
 export function RemoteWorkspace({
   panes,
+  emptyTitle,
+  emptyBody,
   onCloseSession,
   onQueueUploads,
   onQueueDownloads,
@@ -34,8 +38,8 @@ export function RemoteWorkspace({
           </div>
         </header>
         <div className="placeholder-body">
-          <strong>{t('remoteWorkspace.emptyTitle')}</strong>
-          <p>{t('remoteWorkspace.emptyBody')}</p>
+          <strong>{emptyTitle ?? t('remoteWorkspace.emptyTitle')}</strong>
+          <p>{emptyBody ?? t('remoteWorkspace.emptyBody')}</p>
         </div>
       </section>
     );

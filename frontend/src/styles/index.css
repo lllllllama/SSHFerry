@@ -945,3 +945,99 @@ a {
     grid-column: auto;
   }
 }
+.middle-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  height: 100%;
+}
+
+.middle-workspace > .panel-shell,
+.middle-workspace > .remote-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.middle-panel-switch {
+  padding: 14px 16px;
+}
+
+.middle-panel-switch-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.middle-panel-switch-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.middle-panel-switch-copy strong {
+  font-size: 14px;
+}
+
+.middle-panel-switch-copy p {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.middle-panel-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.middle-panel-button {
+  border: 0;
+  background: transparent;
+  border-radius: 999px;
+  padding: 8px 12px;
+  cursor: pointer;
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+.middle-panel-button.is-active {
+  background: rgba(214, 225, 228, 0.72);
+  color: var(--text-main);
+}
+
+.middle-panel-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.middle-panel-select {
+  margin-top: 12px;
+}
+
+@media (max-width: 1280px) {
+  .workspace-shell .middle-workspace {
+    height: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .middle-panel-switch-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .middle-panel-toggle {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .middle-panel-button {
+    flex: 1 1 0;
+  }
+}

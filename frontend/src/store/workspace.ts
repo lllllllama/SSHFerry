@@ -1,6 +1,8 @@
-import { create } from 'zustand';
+﻿import { create } from 'zustand';
 
 import type { SessionResponse } from '../api/types';
+
+export type CenterPanelMode = 'local' | 'remote';
 
 export interface RemotePaneState {
   sessionId: string;
@@ -17,6 +19,8 @@ interface WorkspaceState {
   localSelection: string[];
   panes: RemotePaneState[];
   activePaneId: string | null;
+  centerPanelMode: CenterPanelMode;
+  centerSessionId: string | null;
   remoteSelections: Record<string, string[]>;
   setSelectedSiteName: (siteName: string | null) => void;
   setLocalPath: (path: string) => void;
@@ -27,6 +31,8 @@ interface WorkspaceState {
   upsertPane: (session: SessionResponse) => void;
   closePane: (sessionId: string) => void;
   setActivePane: (sessionId: string | null) => void;
+  setCenterPanelMode: (mode: CenterPanelMode) => void;
+  setCenterSessionId: (sessionId: string | null) => void;
   setPanePath: (sessionId: string, path: string) => void;
   setPanePathDraft: (sessionId: string, path: string) => void;
   setPaneStale: (sessionId: string, stale: boolean) => void;
@@ -61,6 +67,20 @@ function upsertSessionPane(panes: RemotePaneState[], session: SessionResponse): 
   );
 }
 
+function resolveCenterSessionId(
+  panes: RemotePaneState[],
+  currentCenterSessionId: string | null,
+  fallbackSessionId: string | null,
+): string | null {
+  if (currentCenterSessionId && panes.some((pane) => pane.sessionId === currentCenterSessionId)) {
+    return currentCenterSessionId;
+  }
+  if (fallbackSessionId && panes.some((pane) => pane.sessionId === fallbackSessionId)) {
+    return fallbackSessionId;
+  }
+  return panes.at(-1)?.sessionId ?? null;
+}
+
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   selectedSiteName: null,
   localCurrentPath: '',
@@ -68,6 +88,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   localSelection: [],
   panes: [],
   activePaneId: null,
+  centerPanelMode: 'local',
+  centerSessionId: null,
   remoteSelections: {},
   setSelectedSiteName: (siteName) => set({ selectedSiteName: siteName }),
   setLocalPath: (path) => set({ localCurrentPath: path, localPathDraft: path, localSelection: [] }),
@@ -98,30 +120,60 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
         state.activePaneId && nextPanes.some((pane) => pane.sessionId === state.activePaneId)
           ? state.activePaneId
           : nextPanes.at(-1)?.sessionId ?? null;
+      const nextCenterSessionId = resolveCenterSessionId(nextPanes, state.centerSessionId, fallbackActive);
       return {
         panes: nextPanes,
         activePaneId: fallbackActive,
+        centerSessionId: nextCenterSessionId,
+        centerPanelMode: state.centerPanelMode === 'remote' && !nextCenterSessionId ? 'local' : state.centerPanelMode,
         remoteSelections: nextSelections,
       };
     }),
   upsertPane: (session) =>
-    set((state) => ({
-      panes: upsertSessionPane(state.panes, session),
-      activePaneId: session.session_id,
-    })),
+    set((state) => {
+      const panes = upsertSessionPane(state.panes, session);
+      const centerSessionId = state.centerSessionId ?? session.session_id;
+      return {
+        panes,
+        activePaneId: session.session_id,
+        centerSessionId,
+      };
+    }),
   closePane: (sessionId) =>
     set((state) => {
       const panes = state.panes.filter((pane) => pane.sessionId !== sessionId);
       const remoteSelections = { ...state.remoteSelections };
       delete remoteSelections[sessionId];
+      const nextActivePaneId =
+        state.activePaneId === sessionId ? panes.at(-1)?.sessionId ?? null : state.activePaneId;
+      const nextCenterSessionId =
+        state.centerSessionId === sessionId ? resolveCenterSessionId(panes, null, nextActivePaneId) : state.centerSessionId;
       return {
         panes,
-        activePaneId:
-          state.activePaneId === sessionId ? panes.at(-1)?.sessionId ?? null : state.activePaneId,
+        activePaneId: nextActivePaneId,
+        centerSessionId: nextCenterSessionId,
+        centerPanelMode: state.centerPanelMode === 'remote' && !nextCenterSessionId ? 'local' : state.centerPanelMode,
         remoteSelections,
       };
     }),
   setActivePane: (sessionId) => set({ activePaneId: sessionId }),
+  setCenterPanelMode: (mode) =>
+    set((state) => {
+      const centerSessionId =
+        mode === 'remote'
+          ? resolveCenterSessionId(state.panes, state.centerSessionId, state.activePaneId)
+          : state.centerSessionId;
+      return {
+        centerPanelMode: mode,
+        centerSessionId,
+        activePaneId: mode === 'remote' ? centerSessionId ?? state.activePaneId : state.activePaneId,
+      };
+    }),
+  setCenterSessionId: (sessionId) =>
+    set((state) => ({
+      centerSessionId: sessionId,
+      activePaneId: sessionId ?? state.activePaneId,
+    })),
   setPanePath: (sessionId, path) =>
     set((state) => ({
       panes: state.panes.map((pane) =>

@@ -4,13 +4,13 @@ import { Navigate } from 'react-router-dom';
 import { closeSession } from '../../api/sessions';
 import type { TransferDragPayload } from '../../api/types';
 import { createDownloadTask, createRemoteCopyTask, createUploadTask } from '../../api/tasks';
-import { LocalPanel } from '../../components/file-browser/LocalPanel';
 import { AppTopBar } from '../../components/layout/AppTopBar';
 import { LogPlaceholder } from '../../components/logs/LogPlaceholder';
 import { RemoteWorkspace } from '../../components/remote-workspace/RemoteWorkspace';
 import { SiteEditorModal } from '../../components/sites/SiteEditorModal';
 import { SiteSidebar } from '../../components/sites/SiteSidebar';
 import { TaskCenter } from '../../components/tasks/TaskCenter';
+import { MiddleWorkspace } from '../../components/workspace/MiddleWorkspace';
 import { useI18n } from '../../i18n';
 import { useAuthStore } from '../../store/auth';
 import { useUiStore } from '../../store/ui';
@@ -26,6 +26,10 @@ export function WorkspacePage() {
   const queryClient = useQueryClient();
   const status = useAuthStore((state) => state.status);
   const panes = useWorkspaceStore((state) => state.panes);
+  const centerPanelMode = useWorkspaceStore((state) => state.centerPanelMode);
+  const centerSessionId = useWorkspaceStore((state) => state.centerSessionId);
+  const setCenterPanelMode = useWorkspaceStore((state) => state.setCenterPanelMode);
+  const setCenterSessionId = useWorkspaceStore((state) => state.setCenterSessionId);
   const protocolOverride = useUiStore((state) => state.protocolOverride);
   const pushToast = useUiStore((state) => state.pushToast);
   const { t } = useI18n();
@@ -149,14 +153,32 @@ export function WorkspacePage() {
     pushToast({ tone: 'success', title: t('workspace.toast.sessionClosed') });
   }
 
+  const pinnedRemoteMode = centerPanelMode === 'remote' && Boolean(centerSessionId);
+  const rightPanes = pinnedRemoteMode ? panes.filter((pane) => pane.sessionId !== centerSessionId) : panes;
+
   return (
     <main className="app-shell workspace-shell">
       <AppTopBar />
       <section className="workspace-grid">
         <SiteSidebar />
-        <LocalPanel onQueueDownloads={handleLocalDrop} />
-        <RemoteWorkspace
+        <MiddleWorkspace
           panes={panes}
+          mode={centerPanelMode}
+          centerSessionId={centerSessionId}
+          onChangeMode={setCenterPanelMode}
+          onChangeSessionId={setCenterSessionId}
+          onQueueLocalDownloads={handleLocalDrop}
+          onCloseSession={(sessionId) => {
+            void handleCloseSession(sessionId);
+          }}
+          onQueueUploads={queueUploads}
+          onQueueDownloads={queueDownloads}
+          onQueueRemoteCopies={queueRemoteCopies}
+        />
+        <RemoteWorkspace
+          panes={rightPanes}
+          emptyTitle={pinnedRemoteMode ? t('workspace.secondaryRemoteEmptyTitle') : undefined}
+          emptyBody={pinnedRemoteMode ? t('workspace.secondaryRemoteEmptyBody') : undefined}
           onCloseSession={(sessionId) => {
             void handleCloseSession(sessionId);
           }}
