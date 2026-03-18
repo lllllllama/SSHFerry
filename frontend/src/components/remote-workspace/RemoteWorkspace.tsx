@@ -26,7 +26,7 @@ export function RemoteWorkspace({
 
   if (!panes.length) {
     return (
-      <section className="panel-shell remote-workspace-empty">
+      <section className="panel-shell remote-workspace-empty remote-workspace-shell">
         <header className="panel-header">
           <div>
             <h3>{t('remoteWorkspace.title')}</h3>
@@ -42,7 +42,7 @@ export function RemoteWorkspace({
   }
 
   return (
-    <section className="remote-workspace-grid">
+    <section className="remote-workspace-grid remote-workspace-shell">
       {panes.map((pane) => (
         <RemotePane
           key={pane.sessionId}

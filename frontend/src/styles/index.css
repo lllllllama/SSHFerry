@@ -62,6 +62,87 @@ a {
   padding: 18px;
 }
 
+.workspace-shell {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 18px;
+  overflow: hidden;
+}
+
+.workspace-shell .topbar {
+  margin-bottom: 0;
+}
+
+.workspace-shell .workspace-grid,
+.workspace-shell .workspace-bottom-grid {
+  margin-top: 0;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.workspace-shell .workspace-grid,
+.workspace-shell .workspace-bottom-grid,
+.workspace-shell .workspace-grid > *,
+.workspace-shell .workspace-bottom-grid > *,
+.workspace-shell .remote-workspace-shell,
+.workspace-shell .remote-pane,
+.workspace-shell .task-center,
+.workspace-shell .log-placeholder {
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-shell .workspace-grid {
+  overflow: hidden;
+}
+
+.workspace-shell .workspace-bottom-grid {
+  max-height: clamp(220px, 30vh, 340px);
+  overflow: hidden;
+}
+
+.workspace-shell .local-panel,
+.workspace-shell .remote-workspace-empty,
+.workspace-shell .remote-pane,
+.workspace-shell .task-center,
+.workspace-shell .log-placeholder {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.workspace-shell .sidebar-shell {
+  position: static;
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
+  overflow: auto;
+}
+
+.workspace-shell .remote-workspace-shell {
+  height: 100%;
+  min-height: 0;
+}
+
+.workspace-shell .remote-workspace-grid {
+  height: 100%;
+  overflow: auto;
+  align-content: start;
+}
+
+.workspace-shell .file-table-shell,
+.workspace-shell .task-table-shell,
+.workspace-shell .placeholder-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.workspace-shell .placeholder-body {
+  overflow: auto;
+}
+
 .bootstrap-page {
   min-height: 100vh;
   display: grid;
@@ -561,10 +642,27 @@ a {
   padding: 14px 18px 18px;
 }
 
+.file-table-shell,
+.task-table-shell {
+  overflow: auto;
+}
+
 .file-table,
 .task-table {
   width: 100%;
   border-collapse: collapse;
+}
+
+.file-table {
+  table-layout: fixed;
+}
+
+.file-table-size-col {
+  width: 112px;
+}
+
+.file-table-modified-col {
+  width: 168px;
 }
 
 .file-table thead th,
@@ -605,6 +703,19 @@ a {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+}
+
+.entry-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-table-size-cell,
+.file-table-modified-cell {
+  white-space: nowrap;
 }
 
 .entry-icon {
@@ -686,9 +797,6 @@ a {
   max-height: none;
 }
 
-.task-table-shell {
-  overflow: auto;
-}
 
 .log-placeholder,
 .remote-workspace-empty {
@@ -744,6 +852,37 @@ a {
   .workspace-bottom-grid,
   .topbar {
     grid-template-columns: 1fr;
+  }
+
+  .workspace-shell {
+    height: auto;
+    min-height: 100vh;
+    display: block;
+    overflow: visible;
+  }
+
+  .workspace-shell .topbar {
+    margin-bottom: 18px;
+  }
+
+  .workspace-shell .workspace-grid,
+  .workspace-shell .workspace-bottom-grid,
+  .workspace-shell .local-panel,
+  .workspace-shell .sidebar-shell,
+  .workspace-shell .remote-workspace-shell,
+  .workspace-shell .remote-pane,
+  .workspace-shell .task-center,
+  .workspace-shell .log-placeholder,
+  .workspace-shell .remote-workspace-grid {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .workspace-shell .file-table-shell,
+  .workspace-shell .task-table-shell,
+  .workspace-shell .placeholder-body {
+    flex: initial;
   }
 
   .sidebar-shell {

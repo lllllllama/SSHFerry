@@ -150,7 +150,7 @@ export function WorkspacePage() {
   }
 
   return (
-    <main className="app-shell">
+    <main className="app-shell workspace-shell">
       <AppTopBar />
       <section className="workspace-grid">
         <SiteSidebar />

@@ -42,7 +42,7 @@ export function LocalPanel({ onQueueDownloads }: LocalPanelProps) {
   }, [listingQuery.data, localCurrentPath, setLocalPath]);
 
   return (
-    <section className="panel-shell">
+    <section className="panel-shell local-panel">
       <header className="panel-header">
         <div>
           <h3>{t('localPanel.title')}</h3>

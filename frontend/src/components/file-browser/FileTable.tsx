@@ -101,11 +101,16 @@ export function FileTable<T extends FileLike>(props: FileTableProps<T>) {
       onDrop={(event) => handleDrop(event, currentPath)}
     >
       <table className="file-table">
+        <colgroup>
+          <col />
+          <col className="file-table-size-col" />
+          <col className="file-table-modified-col" />
+        </colgroup>
         <thead>
           <tr>
             <th>{t('common.name')}</th>
-            <th>{t('common.size')}</th>
-            <th>{t('common.modified')}</th>
+            <th className="file-table-size-cell">{t('common.size')}</th>
+            <th className="file-table-modified-cell">{t('common.modified')}</th>
           </tr>
         </thead>
         <tbody>
@@ -163,12 +168,12 @@ export function FileTable<T extends FileLike>(props: FileTableProps<T>) {
                   handleDrop(event, entry.path);
                 }}
               >
-                <td className="name-cell">
+                <td className="name-cell" title={entry.name}>
                   <span className={`entry-icon ${entry.is_dir ? 'entry-dir' : 'entry-file'}`} />
-                  <span>{entry.name}</span>
+                  <span className="entry-name">{entry.name}</span>
                 </td>
-                <td>{entry.is_dir ? '--' : formatBytes(entry.size)}</td>
-                <td>{formatDateTime(entry.mtime)}</td>
+                <td className="file-table-size-cell">{entry.is_dir ? '--' : formatBytes(entry.size)}</td>
+                <td className="file-table-modified-cell">{formatDateTime(entry.mtime)}</td>
               </tr>
             );
           })}
