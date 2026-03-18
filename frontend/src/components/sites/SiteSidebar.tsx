@@ -158,13 +158,13 @@ export function SiteSidebar() {
       </header>
 
       <section className="sidebar-section">
-        <div className="inline-actions wrap-actions">
-          <button type="button" className="primary-button" onClick={() => openSiteEditor(null)}>
+        <div className="sidebar-action-grid">
+          <button type="button" className="ghost-button site-action-button" onClick={() => openSiteEditor(null)}>
             {t('common.add')}
           </button>
           <button
             type="button"
-            className="ghost-button"
+            className="ghost-button site-action-button"
             disabled={!selectedSite}
             onClick={() => openSiteEditor(selectedSite)}
           >
@@ -172,7 +172,7 @@ export function SiteSidebar() {
           </button>
           <button
             type="button"
-            className="ghost-button"
+            className="ghost-button site-action-button"
             disabled={!selectedSite}
             onClick={() => {
               if (selectedSite) {
@@ -184,7 +184,7 @@ export function SiteSidebar() {
           </button>
           <button
             type="button"
-            className="ghost-button"
+            className="ghost-button site-action-button"
             disabled={!selectedSite}
             onClick={() => {
               if (!selectedSite) {
@@ -201,7 +201,7 @@ export function SiteSidebar() {
           </button>
           <button
             type="button"
-            className="ghost-button"
+            className="ghost-button site-action-button site-action-span-2"
             disabled={!selectedSite}
             onClick={() => {
               if (!selectedSite) {
@@ -218,7 +218,7 @@ export function SiteSidebar() {
           </button>
           <button
             type="button"
-            className="ghost-button"
+            className="ghost-button site-action-button site-action-span-2"
             disabled={!activeSessionId}
             onClick={() => {
               if (activeSessionId) {

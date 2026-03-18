@@ -431,6 +431,27 @@ a {
   flex-wrap: wrap;
 }
 
+.sidebar-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.site-action-button {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.site-action-span-2 {
+  grid-column: 1 / -1;
+}
+
+
+
 .path-bar {
   padding: 12px 18px 0;
 }
@@ -782,6 +803,8 @@ a {
   gap: 8px;
   align-items: center;
   color: var(--text-soft);
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .task-current-cell details {
@@ -910,5 +933,15 @@ a {
   .task-toolbar {
     flex-direction: column;
     align-items: stretch;
+  }
+}
+
+@media (max-width: 560px) {
+  .sidebar-action-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .site-action-span-2 {
+    grid-column: auto;
   }
 }

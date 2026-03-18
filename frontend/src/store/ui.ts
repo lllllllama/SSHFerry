@@ -25,12 +25,10 @@ interface ConfirmState {
 
 interface UiState {
   protocolOverride: ProtocolOverride;
-  taskCenterExpanded: boolean;
   siteEditor: SiteEditorState;
   confirm: ConfirmState;
   toasts: ToastItem[];
   setProtocolOverride: (value: ProtocolOverride) => void;
-  setTaskCenterExpanded: (expanded: boolean) => void;
   openSiteEditor: (site?: SiteResponse | null) => void;
   closeSiteEditor: () => void;
   openConfirm: (options: Omit<ConfirmState, 'open'>) => void;
@@ -41,7 +39,6 @@ interface UiState {
 
 export const useUiStore = create<UiState>((set) => ({
   protocolOverride: 'auto',
-  taskCenterExpanded: true,
   siteEditor: { open: false, site: null },
   confirm: {
     open: false,
@@ -53,7 +50,6 @@ export const useUiStore = create<UiState>((set) => ({
   },
   toasts: [],
   setProtocolOverride: (value) => set({ protocolOverride: value }),
-  setTaskCenterExpanded: (expanded) => set({ taskCenterExpanded: expanded }),
   openSiteEditor: (site = null) => set({ siteEditor: { open: true, site } }),
   closeSiteEditor: () => set({ siteEditor: { open: false, site: null } }),
   openConfirm: (options) =>
