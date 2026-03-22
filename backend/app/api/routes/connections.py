@@ -27,7 +27,7 @@ def check_connection(
     app_state: AppState = Depends(get_app_state),
 ) -> ConnectionCheckResponse:
     service = ConnectionService(app_state.site_store, app_state.remote_sessions, context.user.user_id, app_state.session_lock)
-    response = service.run_check(payload)
+    response = ConnectionCheckResponse.model_validate(service.run_check(payload))
     passed_count = sum(1 for item in response.results if item.passed)
     app_state.activity_service.publish(
         user_id=context.user.user_id,

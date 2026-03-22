@@ -10,29 +10,40 @@ Multi-session SSH file transfer workspace for safer daily remote operations.
 
 ## Overview
 
-SSHFerry is an SSH file operations project with three active parts in one repository:
+SSHFerry is an SSH file operations project that combines a desktop client, a local backend, and a web frontend in a single repository.
 
-- A desktop client built with Python and PySide6
-- A local FastAPI backend that exposes transfer, site, task, and workspace APIs
-- A React + Vite frontend that is being integrated around the backend APIs
+The desktop client is the current primary entry point. It already covers the main workflow for practical remote file work: browse, upload, download, remote-to-remote copy, task control, and safer remote boundaries through `remote_root`.
 
-The current primary entry point is the desktop client. It already covers the core workflow for practical remote file work: browsing, upload, download, remote-to-remote copy, task control, and safer path boundaries through `remote_root`.
+## Why SSHFerry
 
-## Current Status
+Many SSH file workflows are still pieced together from terminals, ad hoc scripts, and separate tools for browsing, transfer, and retry handling.
 
-- Desktop client: usable and the recommended way to run SSHFerry today
-- Backend service: available and wired into the repository's transfer logic
-- Frontend app: present and functional in parts, but still under active integration
+SSHFerry brings those daily operations into one workspace so routine remote work is easier to inspect, safer to control, and less error-prone:
 
-## Core Capabilities
+- One place for local and remote browsing
+- Built-in task visibility and transfer control
+- Multiple remote sessions in the same workflow
+- Safer remote boundaries through `remote_root`
+- Practical support for `sftp`, `scp`, and parallel transfer paths
 
+## Highlights
+
+- Desktop client: usable and recommended today
+- Backend service: available and integrated with repository transfer logic
+- Frontend app: present, partially functional, and still under active integration
 - Manage multiple remote sites in one workspace
 - Browse local and remote files side by side
 - Upload, download, and drag between remote sessions
-- Use `sftp`, `scp`, and parallel transfer paths where appropriate
-- Pause, resume, cancel, restart, and observe task progress
+- Use `sftp`, `scp`, and parallel transfer paths when appropriate
+- Pause, resume, cancel, restart, and monitor transfer tasks
 - Restrict remote operations with `remote_root`
 - Import site information from SSH-style commands
+
+## Components
+
+- Desktop client: Python + PySide6 application for day-to-day file operations
+- Backend service: FastAPI app for sites, sessions, tasks, logs, and workspace APIs
+- Frontend app: React + Vite UI being integrated around backend APIs
 
 ## Repository Layout
 
@@ -45,28 +56,28 @@ tests/      Pytest suite
 tools/      Packaging and benchmark scripts
 ```
 
-## Requirements
+## Getting Started
+
+### Requirements
 
 - Python `3.11+`
 - Node.js `18+` for frontend work
 - Windows, Linux, or macOS for desktop development
 
-Install Python dependencies:
+### Install Python Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Frontend dependencies:
+### Install Frontend Dependencies
 
 ```bash
 cd frontend
 npm install
 ```
 
-## Quick Start
-
-### Run the desktop client
+## Run
 
 Windows:
 
@@ -86,20 +97,13 @@ Direct module entry:
 python -m src.app.main
 ```
 
-### Run the backend service
+Backend service:
 
 ```bash
 python -m backend.app.main
 ```
 
-Useful backend environment variables:
-
-- `SSHFERRY_BACKEND_HOST` default: `127.0.0.1`
-- `SSHFERRY_BACKEND_PORT` default: `18080`
-- `SSHFERRY_ALLOWED_ORIGINS`
-- `SSHFERRY_LOCAL_TOKEN`
-
-### Run the frontend app
+Frontend app:
 
 ```bash
 cd frontend
@@ -113,7 +117,14 @@ cd frontend
 npm run build
 ```
 
-## Typical Desktop Workflow
+Common backend environment variables:
+
+- `SSHFERRY_BACKEND_HOST` default: `127.0.0.1`
+- `SSHFERRY_BACKEND_PORT` default: `18080`
+- `SSHFERRY_ALLOWED_ORIGINS`
+- `SSHFERRY_LOCAL_TOKEN`
+
+## Typical Workflow
 
 1. Add a site manually or import one from an SSH command
 2. Set `remote_root` to a dedicated directory when possible
@@ -130,10 +141,10 @@ Notes:
 
 ## Testing
 
-Run the test suite:
+Run the full backend-focused test suite:
 
 ```bash
-pytest -q
+pytest
 ```
 
 Quick import smoke check:
@@ -144,9 +155,9 @@ python -c "from src.shared.models import SiteConfig, Task; from src.core.schedul
 
 ## Packaging
 
-Windows packaging targets the desktop client.
+Windows packaging currently targets the desktop client.
 
-Build:
+Standard build:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\build_windows.ps1 -VenvPath .venv_compat

@@ -4,4 +4,5 @@ paramiko>=3.4.0
 scp>=0.15.0
 uvicorn>=0.35.0
 pytest>=7.4.0
+pytest-cov>=7.0.0
 ruff>=0.1.0
