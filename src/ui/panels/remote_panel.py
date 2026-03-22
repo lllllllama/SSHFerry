@@ -1,8 +1,9 @@
 ﻿"""Remote file panel for displaying remote directory contents."""
 import json
 import os
+from dataclasses import dataclass, field
 
-from PySide6.QtCore import QByteArray, QMimeData, QSize, Qt, Signal
+from PySide6.QtCore import QByteArray, QMimeData, QSize, Qt, Signal, QTimer
 from PySide6.QtGui import QColor, QDrag, QPainter, QPixmap
 from shiboken6 import isValid
 from PySide6.QtWidgets import (
@@ -25,6 +26,17 @@ from PySide6.QtWidgets import (
 
 from src.shared.models import RemoteEntry
 from src.ui.theme import TOKENS, alpha_hex, mono_font
+
+
+@dataclass
+class TreeRestoreState:
+    expanded_paths: set[str] = field(default_factory=set)
+    current_path: str | None = None
+    subtrees: dict[str, tuple[str, list[RemoteEntry]]] = field(default_factory=dict)
+    anchor_path: str | None = None
+    anchor_offset: int = 0
+    vscroll_value: int = 0
+    hscroll_value: int = 0
 
 
 class MetricsColumnDelegate(QStyledItemDelegate):
@@ -166,13 +178,6 @@ class RemotePanel(QWidget):
         self.btn_up.clicked.connect(lambda: self.request_go_up.emit())
         nav.addWidget(self.btn_up)
 
-        self.btn_refresh = QPushButton("Refresh")
-        self.btn_refresh.setProperty("variant", "ghost")
-        self.btn_refresh.setMinimumWidth(78)
-        self.btn_refresh.setFixedHeight(34)
-        self.btn_refresh.clicked.connect(self._on_refresh_clicked)
-        nav.addWidget(self.btn_refresh)
-
         self.path_label = QLabel("Remote: /")
         self.path_label.setObjectName("sectionTitle")
         nav.addWidget(self.path_label, stretch=1)
@@ -237,57 +242,61 @@ class RemotePanel(QWidget):
         self.site_name = site_name
         self.set_path(self.current_path)
 
-    def set_root_entries(self, entries: list[RemoteEntry]):
-        """Populate the root level of the tree."""
+    def reset_view_state(self):
+        """Clear visible items and any pending restore state."""
         self.tree.clear()
-        self.populate_node(self.tree.invisibleRootItem(), entries)
 
-    def populate_node(self, item: QTreeWidgetItem, entries: list[RemoteEntry]):
+    def set_root_entries(self, entries: list[RemoteEntry], preserve_state: bool = False):
+        """Populate the root level of the tree."""
+        restore_state = self._capture_restore_state() if preserve_state else None
+        self.tree.setUpdatesEnabled(False)
+        try:
+            self.tree.clear()
+            self.populate_node(self.tree.invisibleRootItem(), entries, restore_state=restore_state)
+        finally:
+            self.tree.setUpdatesEnabled(True)
+        if restore_state:
+            self._schedule_restore_view_anchor(restore_state)
+
+    def populate_node(
+        self,
+        item: QTreeWidgetItem,
+        entries: list[RemoteEntry],
+        preserve_state: bool = False,
+        restore_state: TreeRestoreState | None = None,
+    ):
         """Populate a specific node with entries."""
         if not isValid(item):
             return
-        # Clear existing children (usually the 'loading' dummy)
-        item.takeChildren()
-        item.setData(0, self.ROLE_EMPTY_LOADED, False)
+        if restore_state is None and preserve_state:
+            restore_state = self._capture_restore_state(item)
+        manage_updates = restore_state is not None and item != self.tree.invisibleRootItem()
+        if manage_updates:
+            self.tree.setUpdatesEnabled(False)
+        try:
+            # Clear existing children (usually the 'loading' dummy)
+            item.takeChildren()
+            item.setData(0, self.ROLE_EMPTY_LOADED, False)
 
-        sorted_entries = sorted(entries, key=lambda e: (not e.is_dir, e.name.lower()))
+            sorted_entries = sorted(entries, key=lambda e: (not e.is_dir, e.name.lower()))
 
-        for entry in sorted_entries:
-            # Create item
-            child = QTreeWidgetItem(item)
-            
-            # Name & icon
-            child.setText(0, entry.name)
-            style = self.tree.style()
-            std_icon = style.standardIcon(QStyle.SP_DirIcon) if entry.is_dir else style.standardIcon(QStyle.SP_FileIcon)
-            child.setIcon(0, std_icon)
-            child.setFont(0, self._get_font(bold=entry.is_dir))
-            
-            # Metadata
-            child.setText(1, "DIR" if entry.is_dir else "FILE")
-            child.setText(2, self._format_size(entry.size) if not entry.is_dir else "")
-            child.setText(3, entry.mtime_datetime.strftime("%Y-%m-%d %H:%M:%S"))
-            child.setFont(2, mono_font(9))
-            child.setFont(3, mono_font(9))
-            child.setTextAlignment(2, Qt.AlignRight | Qt.AlignVCenter)
-            child.setTextAlignment(3, Qt.AlignLeft | Qt.AlignVCenter)
-            
-            # Store data
-            child.setData(0, Qt.UserRole, entry)
+            for entry in sorted_entries:
+                self._append_entry_item(item, entry, restore_state)
 
-            # If directory, add dummy child to enable expansion indicator
-            if entry.is_dir:
-                dummy = QTreeWidgetItem(child)
-                dummy.setText(0, "Loading...")
-                child.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
+            # Keep an expansion handle for empty folders so users can collapse back.
+            if item != self.tree.invisibleRootItem() and not sorted_entries:
+                empty = QTreeWidgetItem(item)
+                empty.setText(0, "(empty)")
+                empty.setDisabled(True)
+                item.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
+                item.setData(0, self.ROLE_EMPTY_LOADED, True)
 
-        # Keep an expansion handle for empty folders so users can collapse back.
-        if item != self.tree.invisibleRootItem() and not sorted_entries:
-            empty = QTreeWidgetItem(item)
-            empty.setText(0, "(empty)")
-            empty.setDisabled(True)
-            item.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
-            item.setData(0, self.ROLE_EMPTY_LOADED, True)
+            self._restore_tree_state_for_children(item, restore_state)
+        finally:
+            if manage_updates:
+                self.tree.setUpdatesEnabled(True)
+        if restore_state and item != self.tree.invisibleRootItem():
+            self._schedule_restore_view_anchor(restore_state)
 
     def get_selected_entries(self) -> list[RemoteEntry]:
         """Return all selected RemoteEntry objects."""
@@ -325,6 +334,183 @@ class RemotePanel(QWidget):
             if found:
                 return found
         return None
+
+    def _capture_restore_state(self, scope_item: QTreeWidgetItem | None = None) -> TreeRestoreState:
+        anchor_path, anchor_offset, vscroll_value, hscroll_value = self._capture_view_anchor()
+        expanded_paths, current_path, subtrees = self._capture_tree_state(scope_item)
+        return TreeRestoreState(
+            expanded_paths=expanded_paths,
+            current_path=current_path,
+            subtrees=subtrees,
+            anchor_path=anchor_path,
+            anchor_offset=anchor_offset,
+            vscroll_value=vscroll_value,
+            hscroll_value=hscroll_value,
+        )
+
+    def _capture_view_anchor(self) -> tuple[str | None, int, int, int]:
+        vscroll = self.tree.verticalScrollBar()
+        hscroll = self.tree.horizontalScrollBar()
+        vscroll_value = vscroll.value()
+        hscroll_value = hscroll.value()
+        anchor_item = self.tree.itemAt(0, 0)
+        anchor_path = None
+        anchor_offset = 0
+        if anchor_item:
+            entry = anchor_item.data(0, Qt.UserRole)
+            if entry:
+                anchor_path = entry.path
+                anchor_offset = self.tree.visualItemRect(anchor_item).top()
+        return anchor_path, anchor_offset, vscroll_value, hscroll_value
+
+    def _schedule_restore_view_anchor(self, restore_state: TreeRestoreState):
+        QTimer.singleShot(0, lambda state=restore_state: self._restore_view_anchor(state))
+
+    def _restore_view_anchor(self, restore_state: TreeRestoreState):
+        hscroll = self.tree.horizontalScrollBar()
+        vscroll = self.tree.verticalScrollBar()
+        hscroll.setValue(restore_state.hscroll_value)
+        if restore_state.anchor_path:
+            anchor_item = self.find_item_by_path(restore_state.anchor_path)
+            if anchor_item:
+                self.tree.scrollToItem(anchor_item, QAbstractItemView.PositionAtTop)
+                vscroll.setValue(max(0, vscroll.value() + restore_state.anchor_offset))
+                return
+        vscroll.setValue(restore_state.vscroll_value)
+
+    def _capture_tree_state(
+        self,
+        scope_item: QTreeWidgetItem | None = None,
+    ) -> tuple[set[str], str | None, dict[str, tuple[str, list[RemoteEntry]]]]:
+        expanded_paths: set[str] = set()
+        subtrees: dict[str, tuple[str, list[RemoteEntry]]] = {}
+
+        def walk(item: QTreeWidgetItem):
+            entry = item.data(0, Qt.UserRole)
+            if entry and entry.is_dir and item.isExpanded():
+                expanded_paths.add(entry.path)
+                subtrees[entry.path] = self._snapshot_directory(item)
+            for index in range(item.childCount()):
+                walk(item.child(index))
+
+        root = self.tree.invisibleRootItem()
+        if scope_item is None or scope_item == root:
+            for index in range(root.childCount()):
+                walk(root.child(index))
+        else:
+            walk(scope_item)
+
+        current_item = self.tree.currentItem()
+        current_path = None
+        if current_item and self._item_within_scope(current_item, scope_item):
+            entry = current_item.data(0, Qt.UserRole)
+            if entry:
+                current_path = entry.path
+        return expanded_paths, current_path, subtrees
+
+    @staticmethod
+    def _item_within_scope(item: QTreeWidgetItem | None, scope_item: QTreeWidgetItem | None) -> bool:
+        if item is None or scope_item is None:
+            return True
+        current = item
+        while current:
+            if current == scope_item:
+                return True
+            current = current.parent()
+        return False
+
+    def _snapshot_directory(self, item: QTreeWidgetItem) -> tuple[str, list[RemoteEntry]]:
+        if item.data(0, self.ROLE_EMPTY_LOADED):
+            return ("empty", [])
+        if self._has_loading_placeholder(item):
+            return ("loading", [])
+        children: list[RemoteEntry] = []
+        for index in range(item.childCount()):
+            child_entry = item.child(index).data(0, Qt.UserRole)
+            if child_entry:
+                children.append(child_entry)
+        return ("entries", children)
+
+    def _append_entry_item(
+        self,
+        parent: QTreeWidgetItem,
+        entry: RemoteEntry,
+        restore_state: TreeRestoreState | None = None,
+    ) -> QTreeWidgetItem:
+        child = QTreeWidgetItem(parent)
+
+        child.setText(0, entry.name)
+        style = self.tree.style()
+        std_icon = style.standardIcon(QStyle.SP_DirIcon) if entry.is_dir else style.standardIcon(QStyle.SP_FileIcon)
+        child.setIcon(0, std_icon)
+        child.setFont(0, self._get_font(bold=entry.is_dir))
+
+        child.setText(1, "DIR" if entry.is_dir else "FILE")
+        child.setText(2, self._format_size(entry.size) if not entry.is_dir else "")
+        child.setText(3, entry.mtime_datetime.strftime("%Y-%m-%d %H:%M:%S"))
+        child.setFont(2, mono_font(9))
+        child.setFont(3, mono_font(9))
+        child.setTextAlignment(2, Qt.AlignRight | Qt.AlignVCenter)
+        child.setTextAlignment(3, Qt.AlignLeft | Qt.AlignVCenter)
+        child.setData(0, Qt.UserRole, entry)
+
+        if entry.is_dir:
+            if not self._restore_cached_children(child, entry.path, restore_state):
+                dummy = QTreeWidgetItem(child)
+                dummy.setText(0, "Loading...")
+            child.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
+        return child
+
+    def _restore_cached_children(
+        self,
+        item: QTreeWidgetItem,
+        path: str,
+        restore_state: TreeRestoreState | None,
+    ) -> bool:
+        if restore_state is None:
+            return False
+        snapshot = restore_state.subtrees.pop(path, None)
+        if snapshot is None:
+            return False
+
+        state, entries = snapshot
+        if state == "loading":
+            loading = QTreeWidgetItem(item)
+            loading.setText(0, "Loading...")
+            return True
+        if state == "empty":
+            empty = QTreeWidgetItem(item)
+            empty.setText(0, "(empty)")
+            empty.setDisabled(True)
+            item.setData(0, self.ROLE_EMPTY_LOADED, True)
+            return True
+
+        for child_entry in entries:
+            self._append_entry_item(item, child_entry, restore_state)
+        self._restore_tree_state_for_children(item, restore_state)
+        return True
+
+    def _restore_tree_state_for_children(self, item: QTreeWidgetItem, restore_state: TreeRestoreState | None):
+        if restore_state is None:
+            return
+        for index in range(item.childCount()):
+            child = item.child(index)
+            entry = child.data(0, Qt.UserRole)
+            if not entry:
+                continue
+            if restore_state.current_path == entry.path:
+                self.tree.setCurrentItem(child)
+                child.setSelected(True)
+                restore_state.current_path = None
+            if entry.is_dir and entry.path in restore_state.expanded_paths:
+                restore_state.expanded_paths.discard(entry.path)
+                child.setExpanded(True)
+                if not self._has_loading_placeholder(child):
+                    QTimer.singleShot(0, lambda path=entry.path, node=child: self.request_expand.emit(path, node))
+
+    @staticmethod
+    def _has_loading_placeholder(item: QTreeWidgetItem) -> bool:
+        return item.childCount() == 1 and item.child(0).text(0) == "Loading..."
 
     # ------------------------------------------------------------------
     # Tree Interaction

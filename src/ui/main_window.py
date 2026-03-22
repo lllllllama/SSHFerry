@@ -757,6 +757,7 @@ class MainWindow(QMainWindow):
             return
         session.site = site
         session.panel.set_session_context(session_id, site.name)
+        session.panel.reset_view_state()
         session.panel.set_path(site.remote_root or "/")
         session.connected = False
         session.status_label.setText("Disconnected")
@@ -819,10 +820,11 @@ class MainWindow(QMainWindow):
             if not target_item:
                 self._log(f"[{session.site.name}] Ignored stale list result for {path}")
                 return
-            session.panel.populate_node(target_item, entries)
+            session.panel.populate_node(target_item, entries, preserve_state=True)
         else:
+            preserve_state = path == session.panel.current_path
             session.panel.set_path(path)
-            session.panel.set_root_entries(entries)
+            session.panel.set_root_entries(entries, preserve_state=preserve_state)
         session.connected = True
         session.status_label.setText(f"Connected: {session.site.name}")
 

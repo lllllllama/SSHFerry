@@ -5,7 +5,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QDir, QMimeData, QModelIndex, QSize, Qt, QUrl, Signal, QItemSelectionModel
+from PySide6.QtCore import QDir, QMimeData, QModelIndex, QSize, Qt, QUrl, Signal, QItemSelectionModel, QSortFilterProxyModel
 from PySide6.QtGui import QColor, QDrag, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -155,8 +155,71 @@ class DraggableTreeView(QTreeView):
         return pixmap
 
 
+class LocalFileSortProxy(QSortFilterProxyModel):
+    """Proxy that keeps directories ahead of files like Windows Explorer."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._sort_order = Qt.AscendingOrder
+        self.setDynamicSortFilter(True)
+        self.setSortCaseSensitivity(Qt.CaseInsensitive)
+
+    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
+        source = self.sourceModel()
+        if source is None:
+            return super().lessThan(left, right)
+
+        left_info = source.fileInfo(left)
+        right_info = source.fileInfo(right)
+        if left_info.isDir() != right_info.isDir():
+            if self._sort_order == Qt.DescendingOrder:
+                return not left_info.isDir()
+            return left_info.isDir()
+
+        column = left.column()
+        if column == 1:
+            return left_info.size() < right_info.size()
+        if column == 3:
+            return left_info.lastModified() < right_info.lastModified()
+
+        left_text = source.data(left, Qt.DisplayRole) or ""
+        right_text = source.data(right, Qt.DisplayRole) or ""
+        return str(left_text).casefold() < str(right_text).casefold()
+
+    def sort(self, column: int, order: Qt.SortOrder = Qt.AscendingOrder) -> None:
+        self._sort_order = order
+        super().sort(column, order)
+
+    def filePath(self, index: QModelIndex) -> str:
+        source = self.sourceModel()
+        if source is None or not index.isValid():
+            return ""
+        return source.filePath(self.mapToSource(index))
+
+    def fileInfo(self, index: QModelIndex):
+        source = self.sourceModel()
+        if source is None:
+            raise RuntimeError("source model unavailable")
+        return source.fileInfo(self.mapToSource(index))
+
+    def setRootPath(self, path: str) -> QModelIndex:
+        source = self.sourceModel()
+        if source is None:
+            return QModelIndex()
+        return self.mapFromSource(source.setRootPath(path))
+
+    def index_for_path(self, path: str) -> QModelIndex:
+        source = self.sourceModel()
+        if source is None:
+            return QModelIndex()
+        return self.mapFromSource(source.index(path))
+
+
 class LocalPanel(QWidget):
     """Panel displaying local file system with navigation and drag support."""
+
+    _DEFAULT_SORT_COLUMN = 0
+    _DEFAULT_SORT_ORDER = Qt.AscendingOrder
 
     file_selected = Signal(str)  # full path of selected file
     dir_changed = Signal(str)  # current directory changed
@@ -232,16 +295,19 @@ class LocalPanel(QWidget):
 
         # File system model
         self.icon_provider = QFileIconProvider()
-        self.model = QFileSystemModel()
-        self.model.setIconProvider(self.icon_provider)
-        self.model.setOption(QFileSystemModel.Option.DontUseCustomDirectoryIcons, True)
-        self.model.setRootPath(self.current_dir)
-        self.model.setFilter(QDir.AllEntries | QDir.NoDotAndDotDot)
+        self.fs_model = QFileSystemModel()
+        self.fs_model.setIconProvider(self.icon_provider)
+        self.fs_model.setOption(QFileSystemModel.Option.DontUseCustomDirectoryIcons, True)
+        self.fs_model.setRootPath(self.current_dir)
+        self.fs_model.setFilter(QDir.AllEntries | QDir.NoDotAndDotDot)
+
+        self.model = LocalFileSortProxy(self)
+        self.model.setSourceModel(self.fs_model)
 
         # Draggable tree view
         self.tree = DraggableTreeView()
         self.tree.setModel(self.model)
-        self.tree.setRootIndex(self.model.index(self.current_dir))
+        self.tree.setRootIndex(self.model.setRootPath(self.current_dir))
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tree.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tree.setIconSize(QSize(18, 18))
@@ -255,7 +321,9 @@ class LocalPanel(QWidget):
         header.setSectionResizeMode(1, QHeaderView.Interactive)
         header.setSectionResizeMode(3, QHeaderView.Interactive)
         header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.tree.sortByColumn(0, Qt.AscendingOrder)
+        header.setSortIndicatorShown(True)
+        header.setSortIndicator(self._DEFAULT_SORT_COLUMN, self._DEFAULT_SORT_ORDER)
+        self.tree.sortByColumn(self._DEFAULT_SORT_COLUMN, self._DEFAULT_SORT_ORDER)
         self.tree.doubleClicked.connect(self._on_double_clicked)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
@@ -286,10 +354,11 @@ class LocalPanel(QWidget):
 
     def _refresh(self):
         """Refresh the current directory view."""
-        # Force model to refresh
+        sort_column, sort_order = self._current_sort_state()
         self.model.setRootPath("")
-        self.model.setRootPath(self.current_dir)
-        self.tree.setRootIndex(self.model.index(self.current_dir))
+        root_index = self.model.setRootPath(self.current_dir)
+        self.tree.setRootIndex(root_index)
+        self._apply_sort_state(sort_column, sort_order)
 
     def _on_path_entered(self):
         path = self.path_edit.text().strip()
@@ -304,12 +373,26 @@ class LocalPanel(QWidget):
             self.file_selected.emit(path)
 
     def _navigate_to(self, path: str):
+        sort_column, sort_order = self._current_sort_state()
         self.current_dir = path
         self.path_edit.setText(path)
-        self.tree.setRootIndex(self.model.index(path))
+        self.tree.setRootIndex(self.model.setRootPath(path))
+        self._apply_sort_state(sort_column, sort_order)
         self.dir_changed.emit(path)
         # Sync drive combo selection
         self._sync_drive_combo()
+
+    def _current_sort_state(self) -> tuple[int, Qt.SortOrder]:
+        header = self.tree.header()
+        column = header.sortIndicatorSection()
+        if column < 0:
+            column = self._DEFAULT_SORT_COLUMN
+        return column, header.sortIndicatorOrder()
+
+    def _apply_sort_state(self, column: int, order: Qt.SortOrder) -> None:
+        header = self.tree.header()
+        header.setSortIndicator(column, order)
+        self.tree.sortByColumn(column, order)
 
     def _populate_drives(self):
         """Populate drive selector with available drives."""

@@ -2,53 +2,54 @@
   <img src="docs/assets/logo.png" alt="SSHFerry logo" width="220" />
 </p>
 
-<h1 align="center">SSHFerry</h1>
+# SSHFerry
 
-<p align="center">
-  Multi-session SSH file transfer workspace for safe daily remote operations
-</p>
+Multi-session SSH file transfer workspace for safer daily remote operations.
 
-<p align="center">
-  <a href="README_zh.md">中文</a> | <strong>English</strong>
-</p>
+[中文](README_zh.md) | **English**
 
 ## Overview
 
-SSHFerry is built for practical SSH file work: upload, download, remote-to-remote copy, visible task control, and safer operation boundaries through `remote_root` sandboxing.
+SSHFerry is an SSH file operations project with three active parts in one repository:
 
-## At A Glance
+- A desktop client built with Python and PySide6
+- A local FastAPI backend that exposes transfer, site, task, and workspace APIs
+- A React + Vite frontend that is being integrated around the backend APIs
 
-- 🖥️ Desktop client: Python + PySide6, the current primary product
-- 🧩 Backend service: local FastAPI API layer
-- 🌐 Frontend app: React + Vite UI under active integration
-- 🔒 Safety first: `remote_root` limits remote operations to allowed paths
-- 📊 Task visibility: pause, resume, cancel, restart, skip-aware progress
-- ⚡ Fast transfer: parallel engines for larger files
-- 🪟 Multi-session workflow: multiple remote sites in one window
-- 🔀 Remote-to-remote copy: drag between remote panels
+The current primary entry point is the desktop client. It already covers the core workflow for practical remote file work: browsing, upload, download, remote-to-remote copy, task control, and safer path boundaries through `remote_root`.
 
 ## Current Status
 
-- ✅ Desktop client is usable and is the recommended entry point today
-- 🔌 Backend is available and wired into the transfer logic
-- 🚧 Frontend is present in the repo and still being integrated
+- Desktop client: usable and the recommended way to run SSHFerry today
+- Backend service: available and wired into the repository's transfer logic
+- Frontend app: present and functional in parts, but still under active integration
+
+## Core Capabilities
+
+- Manage multiple remote sites in one workspace
+- Browse local and remote files side by side
+- Upload, download, and drag between remote sessions
+- Use `sftp`, `scp`, and parallel transfer paths where appropriate
+- Pause, resume, cancel, restart, and observe task progress
+- Restrict remote operations with `remote_root`
+- Import site information from SSH-style commands
 
 ## Repository Layout
 
 ```text
-src/        Desktop app, transfer engines, scheduler, services, shared models
+src/        Desktop application, transfer engines, scheduler, shared models
 backend/    FastAPI backend service
-frontend/   React + Vite frontend
-docs/       Maintained implementation docs
+frontend/   React + Vite frontend application
+docs/       Maintained implementation and design documents
 tests/      Pytest suite
-tools/      Build and benchmark scripts
+tools/      Packaging and benchmark scripts
 ```
 
 ## Requirements
 
-- 🐍 Python `3.11+`
-- 📦 Node.js `18+` for frontend development
-- 💻 Windows, Linux, or macOS for desktop development
+- Python `3.11+`
+- Node.js `18+` for frontend work
+- Windows, Linux, or macOS for desktop development
 
 Install Python dependencies:
 
@@ -56,9 +57,16 @@ Install Python dependencies:
 pip install -r requirements.txt
 ```
 
+Frontend dependencies:
+
+```bash
+cd frontend
+npm install
+```
+
 ## Quick Start
 
-### 🖥️ Run the desktop client
+### Run the desktop client
 
 Windows:
 
@@ -78,66 +86,57 @@ Direct module entry:
 python -m src.app.main
 ```
 
-### 🔌 Run the backend
+### Run the backend service
 
 ```bash
 python -m backend.app.main
 ```
 
-Backend environment variables:
+Useful backend environment variables:
 
 - `SSHFERRY_BACKEND_HOST` default: `127.0.0.1`
 - `SSHFERRY_BACKEND_PORT` default: `18080`
 - `SSHFERRY_ALLOWED_ORIGINS`
 - `SSHFERRY_LOCAL_TOKEN`
 
-### 🌐 Run the frontend
+### Run the frontend app
 
 ```bash
 cd frontend
-npm install
 npm run dev
 ```
 
-Build:
+Build the frontend:
 
 ```bash
 cd frontend
-npm install
 npm run build
 ```
 
-## Desktop Workflow
+## Typical Desktop Workflow
 
-1. ➕ Add a site manually or import from an SSH command.
-2. 🧭 Set `remote_root` to a dedicated directory when possible.
-3. 🧪 Run the built-in connection checks.
-4. 🪟 Open one or more remote sessions.
-5. ⬆️⬇️ Upload, download, or drag items between remote panels.
-6. 📊 Monitor and control transfers in the task center.
+1. Add a site manually or import one from an SSH command
+2. Set `remote_root` to a dedicated directory when possible
+3. Run the built-in connection check
+4. Open one or more remote sessions
+5. Transfer files between local and remote panels, or drag between remote panels
+6. Monitor and control work in the task center
 
 Notes:
 
-- `sftp` and `scp` are supported as site-level defaults.
-- A window-level override can force `Auto`, `SFTP`, or `SCP`.
-- If `remote_root` is empty, operations fall back to `/`.
-
-## Transfer Engines
-
-- 📁 `sftp`: default transfer engine
-- ⚡ `parallel`: chunked transfer path for larger files
-- 🧱 `scp`: manual overwrite-oriented alternative
-- 🔀 Remote-to-remote transfers may use direct, relay, parallel bridge, or mixed directory strategies depending on file size and site capability
+- Site-level protocol defaults support `sftp` and `scp`
+- A window-level override can force `Auto`, `SFTP`, or `SCP`
+- If `remote_root` is empty, operations fall back to `/`
 
 ## Testing
 
-Run the full suite:
+Run the test suite:
 
 ```bash
 pytest -q
 ```
 
-Quick import check:
+Quick import smoke check:
 
 ```bash
 python -c "from src.shared.models import SiteConfig, Task; from src.core.scheduler import TaskScheduler; from src.services.connection_checker import ConnectionChecker; print('imports_ok')"
@@ -145,7 +144,7 @@ python -c "from src.shared.models import SiteConfig, Task; from src.core.schedul
 
 ## Packaging
 
-Windows packaging currently targets the desktop client.
+Windows packaging targets the desktop client.
 
 Build:
 
@@ -165,13 +164,7 @@ Release build:
 powershell -ExecutionPolicy Bypass -File .\tools\build_windows.ps1 -Clean -VenvPath .venv_compat
 ```
 
-Wrapper:
-
-```bat
-tools\build_windows.bat
-```
-
-Expected output:
+Expected outputs:
 
 ```text
 release/SSHFerry-<version>-windows/
@@ -179,57 +172,11 @@ release/SSHFerry-<version>-windows.zip
 release/SSHFerry-<version>-windows.sha256
 ```
 
-Packaging notes:
-
-- 📦 Publish the entire folder or generated `.zip`, not only the `.exe`
-- 🧱 The build uses `onedir` layout for Qt runtime stability
-- 🚫 UPX is disabled by default
-
-## Performance Tuning
-
-Default scheduler concurrency:
-
-- `SSHFERRY_MAX_WORKERS_TOTAL=3`
-- `SSHFERRY_MAX_WORKERS_SFTP=3`
-- `SSHFERRY_MAX_WORKERS_SCP=2`
-- `SSHFERRY_MAX_WORKERS_PARALLEL=1`
-
-Common transfer tuning variables:
-
-- `SSHFERRY_PARALLEL_THRESHOLD_BYTES`
-- `SSHFERRY_PARALLEL_PRESET`
-- `SSHFERRY_PARALLEL_UPLOAD_PRESET`
-- `SSHFERRY_PARALLEL_DOWNLOAD_PRESET`
-- `SSHFERRY_REMOTE_RELAY_DOWNLOAD_PRESET`
-- `SSHFERRY_REMOTE_RELAY_UPLOAD_PRESET`
-- `SSHFERRY_PARALLEL_WORKERS`
-- `SSHFERRY_PARALLEL_CHUNK_BYTES`
-- `SSHFERRY_PARALLEL_WARMUP_BATCH`
-- `SSHFERRY_PARALLEL_WARMUP_DELAY`
-- `SSHFERRY_PARALLEL_MAX_CHUNK_RETRIES`
-- `SSHFERRY_STRICT_HOSTKEY`
-
-Benchmark example:
-
-```bash
-python tools/benchmark_transfer.py --site "<your-site-name>" --size-mb 512 --iterations 2
-```
-
-## Storage And Safety
-
-- 🔐 Passwords are not persisted by default
-- 💾 If password saving is enabled, credentials are stored locally on the current machine
-- 🛡️ Prefer least-privilege accounts and a non-root `remote_root`
-
-Site store path:
-
-- Windows: `%USERPROFILE%\AppData\Local\SSHFerry\sites.json`
-- Linux and macOS: `~/.config/sshferry/sites.json`
-
 ## Documentation
 
-- 📘 [Docs Index](docs/README.md)
-- 🧱 [Frontend Build Guide](docs/frontend/FRONTEND_BUILD.md)
-- 🔌 [Frontend API Guide](docs/frontend/FRONTEND_API.md)
-- 🎨 [Frontend Design Guide](docs/frontend/FRONTEND_DESIGN.md)
-- 🛠️ [Backend Overview](docs/backend/BACKEND_OVERVIEW.md)
+- [Docs Index](docs/README.md)
+- [Chinese Docs Index](docs/README_zh.md)
+- [Backend Overview](docs/backend/BACKEND_OVERVIEW.md)
+- [Frontend Build Guide](docs/frontend/FRONTEND_BUILD.md)
+- [Frontend API Guide](docs/frontend/FRONTEND_API.md)
+- [Frontend Design Guide](docs/frontend/FRONTEND_DESIGN.md)
