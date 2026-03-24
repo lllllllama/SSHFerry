@@ -4,80 +4,116 @@
 
 # SSHFerry
 
-Multi-session SSH file transfer workspace for safer daily remote operations.
+<div align="center">
+  <p>
+    <img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11+">
+    <img src="https://img.shields.io/badge/Desktop-PySide6-0F172A?style=for-the-badge" alt="Desktop PySide6">
+    <img src="https://img.shields.io/badge/Backend-FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="Backend FastAPI">
+    <img src="https://img.shields.io/badge/Frontend-React%20%2B%20Vite-2563EB?style=for-the-badge&logo=react&logoColor=white" alt="Frontend React and Vite">
+  </p>
 
-[中文](README_zh.md) | **English**
+  <h3>Local-first SSH file operations with multi-session transfer control, safer remote boundaries, and inspectable task workflows.</h3>
 
-## 🚀 Overview
+  <p>
+    SSHFerry brings desktop file browsing, transfer scheduling, local backend APIs, and a web UI into one repository for practical day-to-day remote work.
+  </p>
 
-SSHFerry is an SSH file operations project that combines a desktop client, a local backend, and a web frontend in a single repository.
+  <p>
+    <a href="README_zh.md">中文</a> |
+    <b>English</b>
+  </p>
 
-The desktop client is the current primary entry point. It already covers the main workflow for practical remote file work: browse, upload, download, remote-to-remote copy, task control, and safer remote boundaries through `remote_root`.
+  <p>
+    <a href="#overview">Overview</a> |
+    <a href="#why-it-stands-out">Why It Stands Out</a> |
+    <a href="#workflow">Workflow</a> |
+    <a href="#quick-start">Quick Start</a> |
+    <a href="#what-you-get">What You Get</a> |
+    <a href="#documentation">Documentation</a>
+  </p>
+</div>
 
-## Why SSHFerry
+## Overview
 
-Many SSH file workflows are still pieced together from terminals, ad hoc scripts, and separate tools for browsing, transfer, and retry handling.
+`SSHFerry` is an SSH file operations workspace that combines:
 
-SSHFerry brings those daily operations into one workspace so routine remote work is easier to inspect, safer to control, and less error-prone:
+- a Python + PySide6 desktop client for day-to-day use
+- a local FastAPI backend for sites, sessions, tasks, logs, and workspace APIs
+- a React + Vite frontend that is being integrated around the backend surface
 
-- 🗂️ One place for local and remote browsing
-- 🎯 Built-in task visibility and transfer control
-- 🔗 Multiple remote sessions in the same workflow
-- 🛡️ Safer remote boundaries through `remote_root`
-- ⚡ Practical support for `sftp`, `scp`, and parallel transfer paths
+The desktop client is the recommended entry point today. It already covers the main workflow for practical remote file work: local and remote browsing, upload, download, remote-to-remote copy, task control, and safer operation boundaries through `remote_root`.
 
-## ✨ Highlights
+## Why It Stands Out
 
-- 🖥️ Desktop client: usable and recommended today
-- 🧩 Backend service: available and integrated with repository transfer logic
-- 🌐 Frontend app: present, partially functional, and still under active integration
-- 📁 Manage multiple remote sites in one workspace
-- ↔️ Browse local and remote files side by side
-- 📤 Upload, download, and drag between remote sessions
-- ⚙️ Use `sftp`, `scp`, and parallel transfer paths when appropriate
-- ⏯️ Pause, resume, cancel, restart, and monitor transfer tasks
-- 🔒 Restrict remote operations with `remote_root`
-- 🧭 Import site information from SSH-style commands
+SSHFerry is built for the gap between raw terminal usage and heavyweight remote file tooling. It keeps common SSH file operations in one place without pretending the workflow is simpler than it is.
 
-## 🧱 Components
+| Typical SSH file workflow | SSHFerry |
+|---|---|
+| Terminal commands, ad hoc scripts, and GUI tools split across tasks | One workspace for browsing, transfer, retry, and task observation |
+| Remote copies often need manual coordination | Supports local-to-remote, remote-to-local, and remote-to-remote flows |
+| Transfer state is easy to lose once a command starts | Exposes task progress and pause, resume, cancel, and restart controls |
+| Dangerous remote paths are easy to touch by mistake | Restricts remote operations with `remote_root` |
+| Site setup is repetitive and error-prone | Supports manual setup plus SSH-style command import |
 
-- 🖥️ Desktop client: Python + PySide6 application for day-to-day file operations
-- 🧩 Backend service: FastAPI app for sites, sessions, tasks, logs, and workspace APIs
-- 🌐 Frontend app: React + Vite UI being integrated around backend APIs
+### Current Product Shape
 
-## 🗃️ Repository Layout
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <h3>🖥️ Desktop First</h3>
+      <p>The desktop client is usable today and remains the main product entry for routine file operations.</p>
+    </td>
+    <td width="33%" valign="top">
+      <h3>🧩 Shared Transfer Core</h3>
+      <p>The backend reuses the same scheduler and transfer logic instead of forking a second implementation.</p>
+    </td>
+    <td width="33%" valign="top">
+      <h3>🌐 Web In Progress</h3>
+      <p>The web frontend already exists in-repo, with backend integration underway rather than being treated as a mock-only shell.</p>
+    </td>
+  </tr>
+</table>
 
-```text
-src/        Desktop application, transfer engines, scheduler, shared models
-backend/    FastAPI backend service
-frontend/   React + Vite frontend application
-docs/       Maintained implementation and design documents
-tests/      Pytest suite
-tools/      Packaging and benchmark scripts
-```
+## Workflow
 
-## 🚀 Getting Started
+SSHFerry is organized around an inspectable remote-file workflow instead of isolated transfer commands:
 
-### 📋 Requirements
+1. Add a site manually or import it from an SSH-style command
+2. Set `remote_root` to a dedicated directory when possible
+3. Run the built-in connection check
+4. Open one or more remote sessions
+5. Browse local and remote panels side by side
+6. Transfer between panels or drag between remote sessions
+7. Monitor and control work in the task center
+
+Operational notes:
+
+- Site-level protocol defaults support `sftp` and `scp`
+- A window-level override can force `Auto`, `SFTP`, or `SCP`
+- If `remote_root` is empty, operations fall back to `/`
+
+## Quick Start
+
+### Requirements
 
 - Python `3.11+`
 - Node.js `18+` for frontend work
 - Windows, Linux, or macOS for desktop development
 
-### 🐍 Install Python Dependencies
+### Install
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 📦 Install Frontend Dependencies
+Frontend dependencies:
 
 ```bash
 cd frontend
 npm install
 ```
 
-## ▶️ Run
+### Recommended Run Path: Desktop Client
 
 Windows:
 
@@ -97,6 +133,8 @@ Direct module entry:
 python -m src.app.main
 ```
 
+### Alternative Run Paths
+
 Backend service:
 
 ```bash
@@ -110,7 +148,7 @@ cd frontend
 npm run dev
 ```
 
-Build the frontend:
+Frontend production build:
 
 ```bash
 cd frontend
@@ -124,22 +162,32 @@ Common backend environment variables:
 - `SSHFERRY_ALLOWED_ORIGINS`
 - `SSHFERRY_LOCAL_TOKEN`
 
-## 🛠️ Typical Workflow
+## What You Get
 
-1. Add a site manually or import one from an SSH command
-2. Set `remote_root` to a dedicated directory when possible
-3. Run the built-in connection check
-4. Open one or more remote sessions
-5. Transfer files between local and remote panels, or drag between remote panels
-6. Monitor and control work in the task center
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>Transfer Workspace</h3>
+      <ul>
+        <li>Manage multiple remote sites in one place</li>
+        <li>Browse local and remote files side by side</li>
+        <li>Upload, download, and copy across remote sessions</li>
+        <li>Choose `sftp`, `scp`, or parallel transfer paths when appropriate</li>
+      </ul>
+    </td>
+    <td width="50%" valign="top">
+      <h3>Operational Control</h3>
+      <ul>
+        <li>Inspect task state instead of relying on terminal output alone</li>
+        <li>Pause, resume, cancel, restart, and monitor transfer tasks</li>
+        <li>Constrain remote operations with `remote_root`</li>
+        <li>Import site information from SSH-style commands</li>
+      </ul>
+    </td>
+  </tr>
+</table>
 
-Notes:
-
-- 🔌 Site-level protocol defaults support `sftp` and `scp`
-- 🎛️ A window-level override can force `Auto`, `SFTP`, or `SCP`
-- 📍 If `remote_root` is empty, operations fall back to `/`
-
-## 🧪 Testing
+## Testing
 
 Run the full backend-focused test suite:
 
@@ -147,13 +195,15 @@ Run the full backend-focused test suite:
 pytest
 ```
 
+The current `pytest` configuration enforces backend coverage reporting and a `99` coverage threshold.
+
 Quick import smoke check:
 
 ```bash
 python -c "from src.shared.models import SiteConfig, Task; from src.core.scheduler import TaskScheduler; from src.services.connection_checker import ConnectionChecker; print('imports_ok')"
 ```
 
-## 📦 Packaging
+## Packaging
 
 Windows packaging currently targets the desktop client.
 
@@ -183,7 +233,21 @@ release/SSHFerry-<version>-windows.zip
 release/SSHFerry-<version>-windows.sha256
 ```
 
-## 📚 Documentation
+<details>
+<summary><b>Repository Layout</b></summary>
+
+```text
+src/        Desktop application, transfer engines, scheduler, shared models
+backend/    FastAPI backend service
+frontend/   React + Vite frontend application
+docs/       Maintained implementation and design documents
+tests/      Pytest suite
+tools/      Packaging and benchmark scripts
+```
+
+</details>
+
+## Documentation
 
 - [Docs Index](docs/README.md)
 - [Chinese Docs Index](docs/README_zh.md)
