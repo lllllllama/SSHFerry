@@ -105,7 +105,7 @@ Operational notes:
 flowchart LR
     A[Add Site] --> B[Set remote_root]
     B --> C[Connection Check]
-    C --> D[Open Session(s)]
+    C --> D[Open Sessions]
     D --> E[Transfer]
     E --> F[Task Center]
 ```
