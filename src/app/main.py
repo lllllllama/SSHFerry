@@ -69,6 +69,37 @@ def _bootstrap_frozen_pyside() -> None:
         return
 
 
+def _resource_path(*parts: str) -> Path | None:
+    """Resolve a bundled asset path for both source and frozen runs."""
+    candidates: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(Path(meipass))
+    candidates.append(Path(sys.executable).resolve().parent)
+    candidates.append(Path(__file__).resolve().parents[2])
+
+    seen: set[Path] = set()
+    for base in candidates:
+        candidate = base.joinpath(*parts)
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _apply_windows_app_id() -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("SSHFerry.Desktop")
+    except Exception:
+        pass
+
+
 def _append_startup_log(
     title: str,
     exc_type: type[BaseException] | None = None,
@@ -123,6 +154,21 @@ def _apply_desktop_theme(app: QApplication) -> None:
     apply_theme(app)
 
 
+def _apply_application_icon(app: QApplication) -> None:
+    from PySide6.QtGui import QIcon
+
+    icon_path = _resource_path("src", "ui", "assets", "app_icon.png")
+    if icon_path is None:
+        icon_path = _resource_path("src", "ui", "assets", "app_icon.ico")
+    if icon_path is None:
+        return
+
+    icon = QIcon(str(icon_path))
+    if icon.isNull():
+        return
+    app.setWindowIcon(icon)
+
+
 class WindowManager:
     """Manages multiple MainWindow instances."""
 
@@ -166,12 +212,14 @@ def main():
     _append_startup_log("startup begin")
     try:
         _bootstrap_frozen_pyside()
+        _apply_windows_app_id()
         from PySide6.QtWidgets import QApplication
         from src.ui.main_window import MainWindow
 
         app = QApplication(sys.argv)
         app.setApplicationName("SSHFerry")
         app.setOrganizationName("SSHFerry")
+        _apply_application_icon(app)
         _apply_desktop_theme(app)
 
         manager = WindowManager.instance(MainWindow)

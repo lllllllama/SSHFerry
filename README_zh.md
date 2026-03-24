@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="docs/assets/logo.png" alt="SSHFerry 标识" width="220" />
-</p>
-
 # SSHFerry
 
 <div align="center">
@@ -42,6 +38,17 @@
 - 围绕后端接口持续集成中的 React + Vite 前端
 
 当前最推荐的入口仍然是桌面客户端。它已经覆盖了日常远程文件处理的主要流程：本地与远端浏览、上传、下载、远端互传、任务控制，以及通过 `remote_root` 提供更安全的操作边界。
+
+### 架构快照
+
+```mermaid
+flowchart LR
+    A[桌面客户端<br/>PySide6] --> B[共享传输核心<br/>调度器与引擎]
+    B --> C[本地 FastAPI 后端<br/>站点 + 任务 + 日志]
+    C --> D[React + Vite 前端]
+```
+
+产品当前仍以桌面端为一等入口，后端和 Web 层复用同一套调度器与传输逻辑，而不是各自分叉实现。
 
 ## 它的差异化在哪里
 
@@ -91,6 +98,17 @@ SSHFerry 的组织方式不是一组分散命令，而是一条可观察的远�
 - 站点级协议默认支持 `sftp` 和 `scp`
 - 窗口级覆盖可强制使用 `Auto`、`SFTP` 或 `SCP`
 - 如果 `remote_root` 为空，操作会回退到 `/`
+
+### 工作流示意
+
+```mermaid
+flowchart LR
+    A[添加站点] --> B[设置 remote_root]
+    B --> C[连接检查]
+    C --> D[打开会话]
+    D --> E[传输文件]
+    E --> F[任务中心]
+```
 
 ## 快速开始
 

@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="docs/assets/logo.png" alt="SSHFerry logo" width="220" />
-</p>
-
 # SSHFerry
 
 <div align="center">
@@ -42,6 +38,17 @@
 - a React + Vite frontend that is being integrated around the backend surface
 
 The desktop client is the recommended entry point today. It already covers the main workflow for practical remote file work: local and remote browsing, upload, download, remote-to-remote copy, task control, and safer operation boundaries through `remote_root`.
+
+### Architecture Snapshot
+
+```mermaid
+flowchart LR
+    A[Desktop Client<br/>PySide6] --> B[Shared Transfer Core<br/>Scheduler + Engines]
+    B --> C[Local FastAPI Backend<br/>Sites + Tasks + Logs]
+    C --> D[React + Vite Frontend]
+```
+
+The product stays desktop-first, while the backend and web layers build on the same scheduler and transfer logic instead of reimplementing the stack.
 
 ## Why It Stands Out
 
@@ -91,6 +98,17 @@ Operational notes:
 - Site-level protocol defaults support `sftp` and `scp`
 - A window-level override can force `Auto`, `SFTP`, or `SCP`
 - If `remote_root` is empty, operations fall back to `/`
+
+### Workflow Diagram
+
+```mermaid
+flowchart LR
+    A[Add Site] --> B[Set remote_root]
+    B --> C[Connection Check]
+    C --> D[Open Session(s)]
+    D --> E[Transfer]
+    E --> F[Task Center]
+```
 
 ## Quick Start
 
