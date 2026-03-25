@@ -1,5 +1,7 @@
 """Path utilities and sandbox validation for SSHFerry."""
+import os
 import posixpath
+import sys
 from typing import Optional
 
 from src.shared.errors import ValidationError
@@ -32,6 +34,27 @@ def normalize_remote_path(path: str) -> str:
         normalized = normalized[1:]
 
     return normalized
+
+
+def to_local_fs_path(path: str | os.PathLike[str]) -> str:
+    """
+    Return a local filesystem path suitable for OS calls.
+
+    Windows uses the extended-length prefix so deep download trees can exceed
+    MAX_PATH without failing during mkdir/open/getsize calls.
+    """
+    raw = os.fspath(path)
+    if sys.platform != "win32" or not raw:
+        return raw
+
+    normalized = os.path.normpath(raw)
+    if normalized.startswith("\\\\?\\") or normalized.startswith("\\\\.\\"):
+        return normalized
+
+    absolute = os.path.abspath(normalized)
+    if absolute.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + absolute.lstrip("\\")
+    return "\\\\?\\" + absolute
 
 
 def ensure_in_sandbox(path: str, remote_root: str) -> None:

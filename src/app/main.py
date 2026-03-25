@@ -10,6 +10,8 @@ from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING
 
+from src.shared.runtime_paths import app_data_dir
+
 # Ensure project root is on path when running directly.
 _src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _src_dir not in sys.path:
@@ -22,12 +24,7 @@ if TYPE_CHECKING:
 
 def _runtime_dir() -> Path:
     """Return platform-appropriate app runtime directory."""
-    if sys.platform == "win32":
-        base = Path.home() / "AppData" / "Local" / "SSHFerry"
-    else:
-        base = Path.home() / ".config" / "sshferry"
-    base.mkdir(parents=True, exist_ok=True)
-    return base
+    return app_data_dir()
 
 
 def _startup_log_path() -> Path:

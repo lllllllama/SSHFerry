@@ -40,6 +40,7 @@ class TaskCenterPanel(QWidget):
         self.tasks: dict[str, Task] = {}
         self._last_signature: tuple = ()
         self._last_row_count = 0
+        self._visible_task_ids: tuple[str, ...] = ()
         self._refresh_count = 0
         self._column_widths = {
             0: 38,
@@ -158,6 +159,7 @@ class TaskCenterPanel(QWidget):
         if not self.tasks:
             self.summary_label.setText("No tasks")
             self._last_signature = ()
+            self._visible_task_ids = ()
             self.table.setRowCount(0)
             self._update_button_states()
             return
@@ -198,27 +200,22 @@ class TaskCenterPanel(QWidget):
             return
         self._last_signature = signature
         self._refresh_count += 1
+        visible_task_ids = tuple(task.task_id for task in visible_tasks)
+        full_rebuild = visible_task_ids != self._visible_task_ids or self._last_row_count != len(visible_tasks)
 
         self.table.blockSignals(True)
         self.table.setUpdatesEnabled(False)
-        self.table.setRowCount(len(visible_tasks))
+        if full_rebuild:
+            self.table.setRowCount(len(visible_tasks))
 
         for row, task in enumerate(visible_tasks):
-            self.table.setCellWidget(row, 0, self._build_checkbox_cell(task.task_id, task.task_id in checked_task_ids))
-            check_item = QTableWidgetItem()
-            check_item.setData(Qt.UserRole, task.task_id)
-            check_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            self.table.setItem(row, 0, check_item)
-
-            self.table.setItem(row, 1, QTableWidgetItem(task.task_id[:8]))
-            self.table.setItem(row, 2, QTableWidgetItem(task.kind.upper()))
-
-            status_item = QTableWidgetItem(task.status.upper())
-            fg, bg = self._status_colors(task.status)
-            status_item.setForeground(fg)
-            status_item.setBackground(bg)
-            status_item.setTextAlignment(Qt.AlignCenter)
-            self.table.setItem(row, 3, status_item)
+            self._apply_task_row(
+                row,
+                task,
+                checked=(task.task_id in checked_task_ids),
+                selected_task_id=selected_task_id,
+                full_rebuild=full_rebuild,
+            )
 
             if task.preparing and task.current_file:
                 progress_text = task.current_file
@@ -230,9 +227,7 @@ class TaskCenterPanel(QWidget):
                 progress_text = f"{task.progress_percent:.1f}%"
                 if task.bytes_total > 0:
                     progress_text += f" ({self._format_size(task.bytes_done)}/{self._format_size(task.bytes_total)})"
-            progress_item = QTableWidgetItem(progress_text)
-            progress_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.table.setItem(row, 4, progress_item)
+            self._set_text_item(row, 4, progress_text, alignment=Qt.AlignRight | Qt.AlignVCenter)
 
             speed_text = ""
             if task.status == "running" and task.speed > 0:
@@ -249,26 +244,82 @@ class TaskCenterPanel(QWidget):
                         avg_speed = task.bytes_done / elapsed
                 if avg_speed > 0:
                     speed_text = f"~{avg_speed / (1024 * 1024):.1f} MB/s"
-            speed_item = QTableWidgetItem(speed_text)
-            speed_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.table.setItem(row, 5, speed_item)
-
-            src_item = QTableWidgetItem(self._elide_middle(task.src, 70))
-            src_item.setToolTip(task.src)
-            self.table.setItem(row, 6, src_item)
-
-            dst_item = QTableWidgetItem(self._elide_middle(task.dst, 70))
-            dst_item.setToolTip(task.dst)
-            self.table.setItem(row, 7, dst_item)
-
-            if selected_task_id == task.task_id:
-                self.table.selectRow(row)
+            self._set_text_item(row, 5, speed_text, alignment=Qt.AlignRight | Qt.AlignVCenter)
+            self._set_text_item(row, 6, self._elide_middle(task.src, 70), tooltip=task.src)
+            self._set_text_item(row, 7, self._elide_middle(task.dst, 70), tooltip=task.dst)
 
         self.table.blockSignals(False)
         self.table.setUpdatesEnabled(True)
+        self._visible_task_ids = visible_task_ids
         self._last_row_count = len(visible_tasks)
-        self._rebalance_destination_width()
+        if full_rebuild:
+            self._rebalance_destination_width()
         self._update_button_states()
+
+    def _apply_task_row(
+        self,
+        row: int,
+        task: Task,
+        *,
+        checked: bool,
+        selected_task_id: Optional[str],
+        full_rebuild: bool,
+    ) -> None:
+        if full_rebuild or self.table.cellWidget(row, 0) is None:
+            self.table.setCellWidget(row, 0, self._build_checkbox_cell(task.task_id, checked))
+            check_item = QTableWidgetItem()
+            check_item.setData(Qt.UserRole, task.task_id)
+            check_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            self.table.setItem(row, 0, check_item)
+        else:
+            checkbox = self._checkbox_for_row(row)
+            if checkbox and checkbox.property("task_id") != task.task_id:
+                checkbox.setProperty("task_id", task.task_id)
+            if checkbox and checkbox.isChecked() != checked:
+                checkbox.blockSignals(True)
+                checkbox.setChecked(checked)
+                checkbox.blockSignals(False)
+            check_item = self.table.item(row, 0)
+            if check_item is not None:
+                check_item.setData(Qt.UserRole, task.task_id)
+
+        self._set_text_item(row, 1, task.task_id[:8])
+        self._set_text_item(row, 2, task.kind.upper())
+        fg, bg = self._status_colors(task.status)
+        self._set_text_item(
+            row,
+            3,
+            task.status.upper(),
+            alignment=Qt.AlignCenter,
+            foreground=fg,
+            background=bg,
+        )
+        if selected_task_id == task.task_id:
+            self.table.selectRow(row)
+
+    def _set_text_item(
+        self,
+        row: int,
+        column: int,
+        text: str,
+        *,
+        tooltip: str | None = None,
+        alignment: Qt.AlignmentFlag | Qt.Alignment | None = None,
+        foreground: QColor | None = None,
+        background: QColor | None = None,
+    ) -> None:
+        item = self.table.item(row, column)
+        if item is None:
+            item = QTableWidgetItem()
+            self.table.setItem(row, column, item)
+        item.setText(text)
+        item.setToolTip(tooltip or "")
+        if alignment is not None:
+            item.setTextAlignment(alignment)
+        if foreground is not None:
+            item.setForeground(foreground)
+        if background is not None:
+            item.setBackground(background)
 
     def _update_button_states(self, selected_task_id: Optional[str] = None):
         checked_ids = self.get_checked_task_ids()

@@ -13,6 +13,7 @@ from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken
 
+from src.shared.runtime_paths import app_data_dir
 from src.shared.models import SiteConfig
 
 logger = logging.getLogger(__name__)
@@ -43,14 +44,7 @@ _PERSIST_FIELDS = [
 
 def _default_store_path() -> Path:
     """Return platform-appropriate config directory."""
-    import sys
-
-    if sys.platform == 'win32':
-        base = Path.home() / 'AppData' / 'Local' / 'SSHFerry'
-    else:
-        base = Path.home() / '.config' / 'sshferry'
-    base.mkdir(parents=True, exist_ok=True)
-    return base / 'sites.json'
+    return app_data_dir() / 'sites.json'
 
 
 def _atomic_write_text(path: Path, content: str, encoding: str = 'utf-8') -> None:

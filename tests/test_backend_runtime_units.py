@@ -175,6 +175,21 @@ def test_build_runtime_settings_rejects_invalid_values(monkeypatch):
         build_runtime_settings()
 
 
+def test_build_runtime_settings_uses_portable_data_dir_override(monkeypatch, tmp_path: Path):
+    data_dir = tmp_path / 'portable-data'
+    monkeypatch.setenv('SSHFERRY_RUNTIME_MODE', 'local-dev')
+    monkeypatch.setenv('SSHFERRY_DATA_DIR', str(data_dir))
+    monkeypatch.delenv('SSHFERRY_WORKSPACE_ROOT', raising=False)
+    monkeypatch.delenv('SSHFERRY_OWNER_FILE', raising=False)
+    monkeypatch.delenv('SSHFERRY_USERS_FILE', raising=False)
+
+    settings = build_runtime_settings()
+
+    assert settings.workspace_root == data_dir / 'workspace'
+    assert settings.owner_file == data_dir / 'backend_runtime' / 'auth' / 'owner.json'
+    assert settings.users_file == data_dir / 'backend_runtime' / 'auth' / 'users.json'
+
+
 def test_build_auth_token_prefers_env(monkeypatch):
     monkeypatch.setenv('SSHFERRY_LOCAL_TOKEN', 'explicit-token')
     assert _build_auth_token() == 'explicit-token'
@@ -191,7 +206,10 @@ def test_build_site_store_falls_back_to_workspace(monkeypatch, tmp_path: Path):
             self.path = path
 
     monkeypatch.setattr('backend.app.services.app_state.SiteStore', FakeSiteStore)
-    monkeypatch.setattr('backend.app.services.app_state.Path.cwd', lambda: tmp_path)
+    monkeypatch.setattr(
+        'backend.app.services.app_state.backend_runtime_dir',
+        lambda: tmp_path / '.backend_runtime',
+    )
 
     store = _build_site_store()
 

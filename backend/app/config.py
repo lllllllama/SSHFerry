@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from urllib.parse import urlparse
 
+from src.shared.runtime_paths import backend_runtime_dir, backend_workspace_root
+
 
 DEFAULT_ALLOWED_ORIGINS = (
     'http://127.0.0.1:5173',
@@ -110,10 +112,14 @@ def build_runtime_settings() -> RuntimeSettings:
         allowed_origins = tuple(allowed_origin_items)
 
     workspace_root_raw = os.getenv('SSHFERRY_WORKSPACE_ROOT', '').strip()
-    workspace_root = Path(workspace_root_raw).expanduser() if workspace_root_raw else Path.cwd() / '.workspace'
+    workspace_root = Path(workspace_root_raw).expanduser() if workspace_root_raw else backend_workspace_root()
 
     owner_file_raw = os.getenv('SSHFERRY_OWNER_FILE', '').strip()
-    owner_file = Path(owner_file_raw).expanduser() if owner_file_raw else Path.cwd() / '.backend_runtime' / 'auth' / 'owner.json'
+    owner_file = (
+        Path(owner_file_raw).expanduser()
+        if owner_file_raw
+        else backend_runtime_dir() / 'auth' / 'owner.json'
+    )
     users_file_raw = os.getenv('SSHFERRY_USERS_FILE', '').strip()
     users_file = Path(users_file_raw).expanduser() if users_file_raw else owner_file.parent / 'users.json'
 

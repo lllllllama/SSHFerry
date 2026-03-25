@@ -16,6 +16,7 @@ from src.engines.sftp_engine import SftpEngine
 from src.shared.errors import ErrorCode, SSHFerryError
 from src.shared.models import SiteConfig
 from src.shared.paths import ensure_in_sandbox, normalize_remote_path
+from src.shared.remote_scan import scan_remote_tree_via_shell
 
 
 class RemoteToRemoteTransferEngine:
@@ -51,7 +52,7 @@ class RemoteToRemoteTransferEngine:
         )
         self.folder_bundle_workers = max(
             1,
-            int(os.getenv("SSHFERRY_REMOTE_DIR_BUNDLE_WORKERS", "2") or "2"),
+            int(os.getenv("SSHFERRY_REMOTE_DIR_BUNDLE_WORKERS", "4") or "4"),
         )
         self.dir_bundle_enabled = os.getenv(
             "SSHFERRY_REMOTE_DIR_ARCHIVE_ENABLED",
@@ -63,7 +64,7 @@ class RemoteToRemoteTransferEngine:
         )
         self.dir_bundle_max_bytes = max(
             1024 * 1024,
-            int(os.getenv("SSHFERRY_REMOTE_DIR_ARCHIVE_MAX_BYTES", str(128 * 1024 * 1024)) or str(128 * 1024 * 1024)),
+            int(os.getenv("SSHFERRY_REMOTE_DIR_ARCHIVE_MAX_BYTES", str(256 * 1024 * 1024)) or str(256 * 1024 * 1024)),
         )
         self.dir_bundle_max_files = max(
             1,
@@ -1469,11 +1470,34 @@ class RemoteToRemoteTransferEngine:
         src_dir: str,
         dst_dir: str,
     ) -> tuple[list[dict[str, object]], list[str]]:
+        shell_entries = scan_remote_tree_via_shell(src_engine, src_dir)
+        if shell_entries is not None:
+            files: list[dict[str, object]] = []
+            directories: list[str] = []
+            for entry in shell_entries:
+                if entry.is_dir:
+                    directories.append(entry.rel_path)
+                    continue
+                files.append(
+                    {
+                        "src": self._join_remote_path(src_dir, entry.rel_path),
+                        "dst": self._join_remote_path(dst_dir, entry.rel_path),
+                        "rel_path": entry.rel_path,
+                        "size": entry.size,
+                    }
+                )
+            return files, directories
+
         files: list[dict[str, object]] = []
         directories: list[str] = []
         normalized_root = normalize_remote_path(src_dir).rstrip("/") or "/"
+        visited: set[str] = set()
 
         def walk(current_src: str) -> None:
+            canonical_src = self._canonical_remote_walk_path(src_engine, current_src)
+            if canonical_src in visited:
+                return
+            visited.add(canonical_src)
             for entry in src_engine.list_dir(current_src):
                 relative_path = self._relative_remote_path(normalized_root, entry.path)
                 if entry.is_dir:
@@ -1491,6 +1515,20 @@ class RemoteToRemoteTransferEngine:
 
         walk(src_dir)
         return files, directories
+
+    @staticmethod
+    def _canonical_remote_walk_path(engine: SftpEngine, remote_path: str) -> str:
+        normalized_path = normalize_remote_path(remote_path)
+        sftp_client = getattr(engine, "sftp_client", None)
+        normalize_fn = getattr(sftp_client, "normalize", None)
+        if callable(normalize_fn):
+            try:
+                resolved_path = normalize_fn(normalized_path)
+            except Exception:
+                return normalized_path
+            if isinstance(resolved_path, str) and resolved_path:
+                return normalize_remote_path(resolved_path)
+        return normalized_path
 
     def _build_small_file_batches(self, files: list[dict[str, object]]) -> list[dict[str, object]]:
         batches: list[dict[str, object]] = []

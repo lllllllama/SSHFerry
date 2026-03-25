@@ -13,6 +13,7 @@ from backend.app.config import RuntimeSettings, build_runtime_settings
 from backend.app.services.activity_service import ActivityService
 from backend.app.services.auth_service import AuthService
 from backend.app.services.log_service import LogService
+from src.shared.runtime_paths import backend_runtime_dir
 from src.services.site_store import SiteStore
 from src.shared.logging_ import setup_logger
 from src.shared.models import SiteConfig
@@ -29,7 +30,7 @@ def _build_site_store() -> SiteStore:
     try:
         return SiteStore()
     except Exception as exc:
-        fallback_dir = Path.cwd() / '.backend_runtime'
+        fallback_dir = backend_runtime_dir()
         fallback_dir.mkdir(parents=True, exist_ok=True)
         fallback_path = fallback_dir / 'sites.json'
         _module_logger.warning('Falling back to workspace site store at %s: %s', fallback_path, exc)

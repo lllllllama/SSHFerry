@@ -1,12 +1,17 @@
 """Tests for task control (pause/resume/restart) and interactivity."""
+import io
 import os
+import tarfile
+import threading
 import time
+import types
 from unittest.mock import MagicMock, patch
 
 import pytest
 from src.core.scheduler import TaskScheduler
 from src.shared.errors import ErrorCode, SSHFerryError
 from src.shared.models import RemoteEntry, SiteConfig, Task
+from src.shared.remote_scan import RemoteScanEntry
 
 
 def create_mock_scheduler():
@@ -91,6 +96,21 @@ def test_restart_invalid_state():
     assert mock_scheduler.restart_task("t2") is False
 
 
+def test_ensure_local_directories_uses_windows_extended_prefix(monkeypatch):
+    scheduler = create_mock_scheduler()
+    created: list[tuple[str, bool]] = []
+
+    monkeypatch.setattr("src.shared.paths.sys.platform", "win32")
+    monkeypatch.setattr(
+        "src.core.scheduler.os.makedirs",
+        lambda path, exist_ok=True: created.append((path, exist_ok)),
+    )
+
+    scheduler._ensure_local_directories([r"C:\deep\folder"])
+
+    assert created == [(r"\\?\C:\deep\folder", True)]
+
+
 def test_restart_done_task():
     mock_scheduler = create_mock_scheduler()
     # Setup - add a completed task
@@ -127,6 +147,182 @@ def test_restart_done_folder_task_resets_subtask_counters():
     assert task.subtask_done == 0
     assert task.current_file == ""
     assert task.subtask_count == 3
+
+
+def test_scan_remote_folder_tree_prefers_shell_scan(tmp_path, monkeypatch):
+    scheduler = create_mock_scheduler()
+    monkeypatch.setattr(
+        "src.core.scheduler.scan_remote_tree_via_shell",
+        lambda _engine, _root: [
+            RemoteScanEntry(rel_path="nested", is_dir=True, size=0),
+            RemoteScanEntry(rel_path="nested/a.jpg", is_dir=False, size=12),
+        ],
+    )
+
+    items = scheduler._scan_remote_folder_tree(object(), "/remote/root", str(tmp_path))
+
+    assert items == [
+        ("/remote/root/nested", os.path.join(str(tmp_path), "nested"), True, 0),
+        ("/remote/root/nested/a.jpg", os.path.join(str(tmp_path), "nested", "a.jpg"), False, 12),
+    ]
+
+
+def test_scan_remote_folder_tree_fallback_skips_revisiting_canonical_paths(monkeypatch):
+    scheduler = create_mock_scheduler()
+    monkeypatch.setattr("src.core.scheduler.scan_remote_tree_via_shell", lambda *_args, **_kwargs: None)
+
+    calls: list[str] = []
+
+    class FakeSftpClient:
+        @staticmethod
+        def normalize(path: str) -> str:
+            return "/remote/root" if path == "/remote/root/link" else path
+
+    class FakeEngine:
+        sftp_client = FakeSftpClient()
+
+        def list_dir(self, path: str):
+            calls.append(path)
+            if path == "/remote/root":
+                return [
+                    RemoteEntry(name="link", path="/remote/root/link", is_dir=True, size=0, mtime=time.time()),
+                    RemoteEntry(name="a.txt", path="/remote/root/a.txt", is_dir=False, size=5, mtime=time.time()),
+                ]
+            raise AssertionError(f"cycle path should not be traversed: {path}")
+
+    items = scheduler._scan_remote_folder_tree(FakeEngine(), "/remote/root", r"C:\downloads")
+
+    assert calls == ["/remote/root"]
+    assert items == [
+        ("/remote/root/link", os.path.join(r"C:\downloads", "link"), True, 0),
+        ("/remote/root/a.txt", os.path.join(r"C:\downloads", "a.txt"), False, 5),
+    ]
+
+
+def test_run_local_folder_transfer_mixed_uses_parallel_bundle_workers(tmp_path, monkeypatch):
+    scheduler = create_mock_scheduler()
+    scheduler.folder_bundle_workers = 2
+    scheduler.folder_bundle_max_files = 2
+    scheduler.folder_bundle_max_bytes = 1024 * 1024
+    scheduler.folder_bundle_enabled = True
+    monkeypatch.setattr(scheduler, "_probe_remote_folder_bundle_support", lambda *args, **kwargs: None)
+
+    task = Task(
+        task_id="bundle-parallel",
+        kind="folder_transfer",
+        engine="sftp",
+        src="/remote/images",
+        dst=str(tmp_path),
+        bytes_total=40,
+        subtask_count=4,
+        src_site_snapshot=scheduler.site_config,
+    )
+
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+
+    def fake_transfer(*_args, **kwargs):
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.05)
+        kwargs["add_progress"](10)
+        with lock:
+            active -= 1
+
+    monkeypatch.setattr(scheduler, "_transfer_folder_download_bundle", fake_transfer)
+
+    mixed_plan = {
+        "large_files": [],
+        "small_files": [
+            {
+                "src": f"/remote/images/{index}.jpg",
+                "dst": str(tmp_path / f"{index}.jpg"),
+                "size": 10,
+                "rel_path": f"{index}.jpg",
+                "tuple": (f"/remote/images/{index}.jpg", str(tmp_path / f"{index}.jpg"), False, 10),
+            }
+            for index in range(4)
+        ],
+        "small_batches": [],
+    }
+
+    scheduler._run_local_folder_transfer_mixed(
+        task,
+        mixed_plan,
+        direction="download",
+        local_root=str(tmp_path),
+        remote_root="/remote/images",
+    )
+
+    assert max_active >= 2
+
+
+def test_transfer_folder_download_bundle_uses_parallel_engine_for_large_archives(tmp_path, monkeypatch):
+    scheduler = create_mock_scheduler()
+    scheduler.folder_bundle_parallel_threshold = 10
+
+    task = Task(
+        task_id="bundle-download",
+        kind="folder_transfer",
+        engine="sftp",
+        src="/remote/images",
+        dst=str(tmp_path),
+        bytes_total=30,
+        subtask_count=1,
+        src_site_snapshot=scheduler.site_config,
+    )
+
+    fake_engine = types.SimpleNamespace(
+        ssh_client=object(),
+        sftp_client=object(),
+        stat=lambda _path: types.SimpleNamespace(size=100),
+        remove_file=lambda _path: None,
+        download_file=lambda *_args, **_kwargs: pytest.fail("single-connection download should not be used"),
+        connect=lambda: None,
+        disconnect=lambda: None,
+    )
+
+    monkeypatch.setattr(scheduler, "_exec_remote_shell", lambda *_args, **_kwargs: (0, "", ""))
+
+    called = {"parallel": 0}
+
+    def fake_parallel_download(self, _remote_path, local_path, callback=None, check_interrupt=None):
+        called["parallel"] += 1
+        with tarfile.open(local_path, "w") as archive:
+            payload = io.BytesIO(b"abc")
+            info = tarfile.TarInfo(name="a.jpg")
+            info.size = 3
+            archive.addfile(info, payload)
+        if callback:
+            callback(100, 100)
+
+    monkeypatch.setattr("src.core.scheduler.ParallelSftpEngine.download_file", fake_parallel_download)
+
+    scheduler._transfer_folder_download_bundle(
+        task,
+        scheduler.site_config,
+        "/remote/images",
+        str(tmp_path),
+        [{"rel_path": "a.jpg", "size": 3}],
+        engine=fake_engine,
+        bundle_id="bundle-0",
+        add_progress=lambda _done: None,
+    )
+
+    assert called["parallel"] == 1
+    assert (tmp_path / "a.jpg").read_bytes() == b"abc"
+
+
+def test_scheduler_uses_higher_bundle_concurrency_defaults():
+    scheduler = create_mock_scheduler()
+
+    assert scheduler.folder_bundle_workers == 4
+    assert scheduler.folder_bundle_max_bytes == 256 * 1024 * 1024
+    assert scheduler.folder_bundle_parallel_threshold == 256 * 1024 * 1024
+    assert scheduler.folder_bundle_parallel_download_preset == "medium"
 
 
 def test_add_task_does_not_queue_preparing_task():
@@ -172,6 +368,23 @@ def test_finish_preparing_task_queues_folder_transfer():
         assert prepared.bytes_total == 1024
         assert prepared.current_file == ""
     assert scheduler.pending_task_count() == 1
+
+
+def test_progress_callback_throttles_intermediate_updates_but_keeps_completion(monkeypatch):
+    scheduler = create_mock_scheduler()
+    scheduler.progress_update_interval_seconds = 10.0
+    scheduler.progress_update_min_bytes = 1000
+    task = Task(task_id="progress1", kind="file_transfer", engine="sftp", src="a", dst="b", bytes_total=100)
+
+    callback = scheduler._progress_callback(task)
+    callback(10, 100)
+    assert task.bytes_done == 10
+
+    callback(20, 100)
+    assert task.bytes_done == 10
+
+    callback(100, 100)
+    assert task.bytes_done == 100
 
 
 def test_resume_paused_folder_task_rebuilds_aggregate_progress():

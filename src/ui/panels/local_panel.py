@@ -5,7 +5,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QDir, QMimeData, QModelIndex, QSize, Qt, QUrl, Signal, QItemSelectionModel, QSortFilterProxyModel
+from PySide6.QtCore import QDir, QMimeData, QModelIndex, QSize, Qt, QUrl, Signal, QItemSelectionModel, QSortFilterProxyModel, QTimer
 from PySide6.QtGui import QColor, QDrag, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.ui.theme import TOKENS, alpha_hex, mono_font
+from src.ui.widgets.feedback import install_button_feedback
 
 
 class MetricsColumnDelegate(QStyledItemDelegate):
@@ -233,6 +234,10 @@ class LocalPanel(QWidget):
         self._base_tree_style = ""
         self._drag_saved_current_index = QModelIndex()
         self._drag_saved_selected_rows = []
+        self._drag_pulse_on = False
+        self._drag_pulse_timer = QTimer(self)
+        self._drag_pulse_timer.setInterval(220)
+        self._drag_pulse_timer.timeout.connect(self._toggle_drag_pulse)
         self._init_ui()
 
     def _init_ui(self):
@@ -346,6 +351,7 @@ class LocalPanel(QWidget):
         self.setAcceptDrops(True)
 
         layout.addWidget(self.tree)
+        install_button_feedback(self)
 
     def _go_up(self):
         parent = str(Path(self.current_dir).parent)
@@ -619,19 +625,17 @@ class LocalPanel(QWidget):
         if self._drag_anim_active:
             return
         self._drag_anim_active = True
-        self.tree.setStyleSheet(
-            self._base_tree_style
-            + (
-                f"QTreeView {{ border: 2px solid {TOKENS.success}; "
-                f"background-color: {alpha_hex(TOKENS.success, 0.08)}; }}"
-            )
-        )
         self._drag_saved_current_index = self.tree.currentIndex()
         self._drag_saved_selected_rows = list(self.tree.selectionModel().selectedRows())
+        self._drag_pulse_on = False
+        self._apply_drag_stylesheet()
+        self._drag_pulse_timer.start()
 
     def _stop_drag_animation(self):
         """Restore previous selection state after drag feedback."""
         self._drag_anim_active = False
+        self._drag_pulse_timer.stop()
+        self._drag_pulse_on = False
         self.tree.setStyleSheet(self._base_tree_style)
         selection_model = self.tree.selectionModel()
         selection_model.clearSelection()
@@ -644,4 +648,23 @@ class LocalPanel(QWidget):
             self.tree.setCurrentIndex(self._drag_saved_current_index)
         self._drag_saved_current_index = QModelIndex()
         self._drag_saved_selected_rows = []
+
+    def _toggle_drag_pulse(self):
+        if not self._drag_anim_active:
+            return
+        self._drag_pulse_on = not self._drag_pulse_on
+        self._apply_drag_stylesheet()
+
+    def _apply_drag_stylesheet(self):
+        border_color = TOKENS.accent
+        background = alpha_hex(TOKENS.accent, 0.12 if self._drag_pulse_on else 0.08)
+        selection = alpha_hex(TOKENS.accent, 0.24 if self._drag_pulse_on else 0.18)
+        self.tree.setStyleSheet(
+            self._base_tree_style
+            + (
+                f"QTreeView {{ border: 2px solid {border_color}; background-color: {background}; }}"
+                f"QTreeView::item:selected {{ background-color: {selection}; "
+                f"color: {TOKENS.text_main}; font-weight: 700; }}"
+            )
+        )
 

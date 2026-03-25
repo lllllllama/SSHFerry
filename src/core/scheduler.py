@@ -23,6 +23,8 @@ from src.services.metrics import MetricsCollector, TransferRecord
 from src.shared.errors import ErrorCode, SSHFerryError
 from src.shared.logging_ import log_task_event
 from src.shared.models import SiteConfig, Task
+from src.shared.paths import normalize_remote_path, to_local_fs_path
+from src.shared.remote_scan import scan_remote_tree_via_shell
 
 
 def _env_int(name: str, default: int, min_value: int) -> int:
@@ -101,12 +103,35 @@ class TaskScheduler:
             0.5,
             float(os.getenv("SSHFERRY_SPEED_WINDOW_SECONDS", "4.0") or "4.0"),
         )
+        self.progress_update_interval_seconds = max(
+            0.0,
+            float(os.getenv("SSHFERRY_PROGRESS_UPDATE_INTERVAL_SECONDS", "0.2") or "0.2"),
+        )
+        self.progress_update_min_bytes = _env_int(
+            "SSHFERRY_PROGRESS_UPDATE_MIN_BYTES",
+            2 * 1024 * 1024,
+            0,
+        )
         self.folder_file_workers = _env_int("SSHFERRY_FOLDER_FILE_WORKERS", 3, 1)
+        self.folder_bundle_workers = _env_int("SSHFERRY_FOLDER_BUNDLE_WORKERS", 4, 1)
         self.folder_parallel_file_slots = _env_int("SSHFERRY_FOLDER_PARALLEL_FILE_SLOTS", 1, 1)
         self.folder_bundle_enabled = os.getenv("SSHFERRY_FOLDER_ARCHIVE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
         self.folder_bundle_file_count_threshold = _env_int("SSHFERRY_FOLDER_ARCHIVE_FILE_COUNT_THRESHOLD", 32, 1)
-        self.folder_bundle_max_bytes = _env_int("SSHFERRY_FOLDER_ARCHIVE_MAX_BYTES", 128 * 1024 * 1024, 1024 * 1024)
+        self.folder_bundle_max_bytes = _env_int("SSHFERRY_FOLDER_ARCHIVE_MAX_BYTES", 256 * 1024 * 1024, 1024 * 1024)
         self.folder_bundle_max_files = _env_int("SSHFERRY_FOLDER_ARCHIVE_MAX_FILES", 256, 1)
+        self.folder_bundle_parallel_threshold = _env_int(
+            "SSHFERRY_FOLDER_ARCHIVE_PARALLEL_THRESHOLD_BYTES",
+            max(self.parallel_threshold, 256 * 1024 * 1024),
+            1024 * 1024,
+        )
+        self.folder_bundle_parallel_upload_preset = _env_preset(
+            "SSHFERRY_FOLDER_ARCHIVE_PARALLEL_UPLOAD_PRESET",
+            "medium",
+        )
+        self.folder_bundle_parallel_download_preset = _env_preset(
+            "SSHFERRY_FOLDER_ARCHIVE_PARALLEL_DOWNLOAD_PRESET",
+            "medium",
+        )
         self.logger = logger or logging.getLogger(__name__)
         self.activity_service = activity_service
         self.workspace_root = Path(workspace_root).expanduser().resolve(strict=False) if workspace_root is not None else None
@@ -586,9 +611,49 @@ class TaskScheduler:
         )
 
     def _progress_callback(self, task: Task):
-        def callback(bytes_transferred, bytes_total):
+        return self._make_task_progress_updater(task)
+
+    def _make_task_progress_updater(self, task: Task):
+        state_lock = Lock()
+        state = {
+            "last_emit_time": 0.0,
+            "last_emit_bytes": int(task.bytes_done),
+        }
+
+        def callback(
+            bytes_transferred: int,
+            bytes_total: int,
+            *,
+            current_file: str | None = None,
+            force: bool = False,
+        ) -> None:
+            should_emit = force
+            now = time.time()
+            if not should_emit:
+                with state_lock:
+                    enough_time = (
+                        self.progress_update_interval_seconds <= 0
+                        or now - state["last_emit_time"] >= self.progress_update_interval_seconds
+                    )
+                    enough_bytes = (
+                        self.progress_update_min_bytes <= 0
+                        or bytes_transferred - state["last_emit_bytes"] >= self.progress_update_min_bytes
+                    )
+                    completed = bytes_total > 0 and bytes_transferred >= bytes_total
+                    should_emit = completed or enough_time or enough_bytes
+                    if not should_emit:
+                        return
+                    state["last_emit_time"] = now
+                    state["last_emit_bytes"] = bytes_transferred
+            else:
+                with state_lock:
+                    state["last_emit_time"] = now
+                    state["last_emit_bytes"] = bytes_transferred
+
             with self.task_lock:
-                self._record_task_progress_locked(task, bytes_transferred, bytes_total)
+                self._record_task_progress_locked(task, bytes_transferred, bytes_total, now=now)
+                if current_file is not None:
+                    task.current_file = current_file
 
         return callback
 
@@ -622,10 +687,17 @@ class TaskScheduler:
             task.bytes_total,
         )
 
-    def _record_task_progress_locked(self, task: Task, bytes_transferred: int, bytes_total: int) -> None:
+    def _record_task_progress_locked(
+        self,
+        task: Task,
+        bytes_transferred: int,
+        bytes_total: int,
+        *,
+        now: float | None = None,
+    ) -> None:
         if task.paused or task.status in ("paused", "canceled"):
             return
-        now = time.time()
+        now = time.time() if now is None else now
         task.bytes_done = bytes_transferred
         task.bytes_total = bytes_total
         if task.speed_samples and task.speed_samples[-1][1] == bytes_transferred:
@@ -738,8 +810,9 @@ class TaskScheduler:
                 except SSHFerryError:
                     remote_size = task.bytes_total
                 offset = 0
-                if os.path.exists(task.dst):
-                    local_size = os.path.getsize(task.dst)
+                fs_dst = to_local_fs_path(task.dst)
+                if os.path.exists(fs_dst):
+                    local_size = os.path.getsize(fs_dst)
                     if local_size == remote_size:
                         with self.task_lock:
                             task.skipped = True
@@ -1047,7 +1120,7 @@ class TaskScheduler:
                 self._upload_dir_recursive_legacy(engine, task, full_path, remote_path)
 
     def _download_dir_recursive_legacy(self, engine: SftpEngine, task: Task, remote_dir: str, local_dir: str):
-        os.makedirs(local_dir, exist_ok=True)
+        os.makedirs(to_local_fs_path(local_dir), exist_ok=True)
         entries = engine.list_dir(remote_dir)
         check_interrupt = self._interrupt_checker(task)
         for entry in entries:
@@ -1059,8 +1132,9 @@ class TaskScheduler:
                 continue
             offset = 0
             skip_file = False
-            if os.path.exists(local_path):
-                local_size = os.path.getsize(local_path)
+            fs_local_path = to_local_fs_path(local_path)
+            if os.path.exists(fs_local_path):
+                local_size = os.path.getsize(fs_local_path)
                 if local_size == entry.size:
                     skip_file = True
                 elif local_size < entry.size:
@@ -1136,9 +1210,24 @@ class TaskScheduler:
         return items
 
     def _scan_remote_folder_tree(self, engine: SftpEngine, remote_dir: str, local_dir: str) -> list[tuple[str, str, bool, int]]:
+        shell_entries = scan_remote_tree_via_shell(engine, remote_dir)
+        if shell_entries is not None:
+            items: list[tuple[str, str, bool, int]] = []
+            normalized_remote = PurePosixPath(remote_dir)
+            for entry in shell_entries:
+                target_local = os.path.join(local_dir, *entry.rel_path.split("/"))
+                source_remote = str(normalized_remote / entry.rel_path)
+                items.append((source_remote, target_local, entry.is_dir, entry.size))
+            return items
+
         items: list[tuple[str, str, bool, int]] = []
+        visited: set[str] = set()
 
         def walk(current_remote: str, current_local: str) -> None:
+            canonical_remote = self._canonical_remote_walk_path(engine, current_remote)
+            if canonical_remote in visited:
+                return
+            visited.add(canonical_remote)
             for entry in engine.list_dir(current_remote):
                 target_local = os.path.join(current_local, entry.name)
                 if entry.is_dir:
@@ -1149,6 +1238,20 @@ class TaskScheduler:
 
         walk(remote_dir, local_dir)
         return items
+
+    @staticmethod
+    def _canonical_remote_walk_path(engine: SftpEngine, remote_path: str) -> str:
+        normalized_path = normalize_remote_path(remote_path)
+        sftp_client = getattr(engine, "sftp_client", None)
+        normalize_fn = getattr(sftp_client, "normalize", None)
+        if callable(normalize_fn):
+            try:
+                resolved_path = normalize_fn(normalized_path)
+            except Exception:
+                return normalized_path
+            if isinstance(resolved_path, str) and resolved_path:
+                return normalize_remote_path(resolved_path)
+        return normalized_path
 
     def _ensure_remote_directories(self, engine: SftpEngine, directories: list[str]) -> None:
         for directory in sorted(set(directories), key=lambda value: (value.count("/"), value)):
@@ -1165,7 +1268,7 @@ class TaskScheduler:
     @staticmethod
     def _ensure_local_directories(directories: list[str]) -> None:
         for directory in sorted(set(directories), key=lambda value: (value.count(os.sep), value)):
-            os.makedirs(directory, exist_ok=True)
+            os.makedirs(to_local_fs_path(directory), exist_ok=True)
 
     def _build_local_folder_file_plans(
         self,
@@ -1312,29 +1415,33 @@ class TaskScheduler:
         transferred: dict[str, int] = {}
         progress_lock = Lock()
         small_batches = list(self._build_local_folder_mixed_plan(bundle_files)["small_batches"])
-        bundle_engine = probe_engine
+        aggregate_done = {"bytes": int(task.bytes_done)}
+        progress_updater = self._make_task_progress_updater(task)
 
         def add_bundle_progress(bundle_key: str, label: str, absolute_done: int) -> None:
-            with self.task_lock, progress_lock:
+            with progress_lock:
                 previous = transferred.get(bundle_key, 0)
                 delta = max(0, absolute_done - previous)
+                if delta <= 0:
+                    return
                 transferred[bundle_key] = absolute_done
-                current_done = min(task.bytes_total, task.bytes_done + delta)
-                self._record_task_progress_locked(task, current_done, task.bytes_total)
-                task.current_file = label
+                aggregate_done["bytes"] = min(task.bytes_total, aggregate_done["bytes"] + delta)
+                current_done = aggregate_done["bytes"]
+            progress_updater(current_done, task.bytes_total, current_file=label)
 
         def mark_bundle_complete(bundle_key: str, label: str, total_bytes: int, file_count: int) -> None:
-            with self.task_lock, progress_lock:
+            with progress_lock:
                 previous = transferred.get(bundle_key, 0)
                 if previous < total_bytes:
-                    task.bytes_done = min(task.bytes_total, task.bytes_done + (total_bytes - previous))
-                    task.speed_samples.append((time.time(), task.bytes_done))
-                    self._refresh_task_speed_locked(task)
+                    aggregate_done["bytes"] = min(task.bytes_total, aggregate_done["bytes"] + (total_bytes - previous))
                     transferred[bundle_key] = total_bytes
+                current_done = aggregate_done["bytes"]
+            with self.task_lock:
+                self._record_task_progress_locked(task, current_done, task.bytes_total)
                 task.subtask_done = min(task.subtask_count, task.subtask_done + file_count)
                 task.current_file = label
 
-        for batch_index, batch in enumerate(small_batches):
+        def transfer_one_batch(batch: dict[str, object], *, reuse_engine: Optional[SftpEngine] = None) -> None:
             if check_interrupt():
                 raise InterruptedError("Task interrupted")
             bundle_label = f"{len(batch['files'])} files"
@@ -1347,7 +1454,7 @@ class TaskScheduler:
                         local_root,
                         remote_root,
                         batch["files"],
-                        engine=bundle_engine,
+                        engine=reuse_engine,
                         bundle_id=bundle_key,
                         add_progress=lambda done, _label=bundle_label, _key=bundle_key: add_bundle_progress(_key, _label, done),
                     )
@@ -1358,17 +1465,14 @@ class TaskScheduler:
                         remote_root,
                         local_root,
                         batch["files"],
-                        engine=bundle_engine,
+                        engine=reuse_engine,
                         bundle_id=bundle_key,
                         add_progress=lambda done, _label=bundle_label, _key=bundle_key: add_bundle_progress(_key, _label, done),
                     )
                 mark_bundle_complete(bundle_key, bundle_label, int(batch["total_bytes"]), len(batch["files"]))
             except SSHFerryError as exc:
-                remaining_files = [item["tuple"] for item in batch["files"]]
-                for remaining in small_batches[batch_index + 1:]:
-                    remaining_files.extend(item["tuple"] for item in remaining["files"])
                 self.logger.warning(
-                    "folder_bundle_failed direction=%s root=%s bundle=%s reason=%s; falling back to per-file for remaining small files",
+                    "folder_bundle_failed direction=%s root=%s bundle=%s reason=%s; falling back to per-file for this batch",
                     direction,
                     remote_root,
                     bundle_key,
@@ -1376,11 +1480,21 @@ class TaskScheduler:
                 )
                 self._run_local_folder_transfer_workers(
                     task,
-                    remaining_files,
+                    [item["tuple"] for item in batch["files"]],
                     direction=direction,
-                    probe_engine=probe_engine,
                 )
-                return
+
+        bundle_worker_count = max(1, min(len(small_batches), self.folder_bundle_workers))
+        if bundle_worker_count == 1:
+            for batch in small_batches:
+                transfer_one_batch(batch, reuse_engine=probe_engine)
+            return
+
+        with ThreadPoolExecutor(max_workers=bundle_worker_count) as executor:
+            futures = [executor.submit(transfer_one_batch, batch) for batch in small_batches]
+            wait(futures)
+            for future in futures:
+                future.result()
 
     def _partition_local_folder_small_files(
         self,
@@ -1454,8 +1568,10 @@ class TaskScheduler:
         parallel_slots = Lock()
         slot_counter = {"active": 0}
         transferred: dict[str, int] = {}
+        aggregate_done = {"bytes": int(task.bytes_done)}
         first_error: list[Exception] = []
         check_interrupt = self._interrupt_checker(task)
+        progress_updater = self._make_task_progress_updater(task)
 
         def acquire_parallel_slot() -> None:
             while True:
@@ -1472,24 +1588,29 @@ class TaskScheduler:
                 slot_counter["active"] = max(0, slot_counter["active"] - 1)
 
         def add_progress(file_key: str, absolute_done: int) -> None:
-            with self.task_lock, progress_lock:
+            label = os.path.basename(file_key)
+            with progress_lock:
                 previous = transferred.get(file_key, 0)
                 delta = max(0, absolute_done - previous)
+                if delta <= 0:
+                    return
                 transferred[file_key] = absolute_done
-                current_done = min(task.bytes_total, task.bytes_done + delta)
-                self._record_task_progress_locked(task, current_done, task.bytes_total)
-                task.current_file = os.path.basename(file_key)
+                aggregate_done["bytes"] = min(task.bytes_total, aggregate_done["bytes"] + delta)
+                current_done = aggregate_done["bytes"]
+            progress_updater(current_done, task.bytes_total, current_file=label)
 
         def mark_complete(file_key: str, file_size: int) -> None:
-            with self.task_lock, progress_lock:
+            label = os.path.basename(file_key)
+            with progress_lock:
                 previous = transferred.get(file_key, 0)
                 if previous < file_size:
-                    task.bytes_done = min(task.bytes_total, task.bytes_done + (file_size - previous))
-                    task.speed_samples.append((time.time(), task.bytes_done))
-                    self._refresh_task_speed_locked(task)
+                    aggregate_done["bytes"] = min(task.bytes_total, aggregate_done["bytes"] + (file_size - previous))
                     transferred[file_key] = file_size
+                current_done = aggregate_done["bytes"]
+            with self.task_lock:
+                self._record_task_progress_locked(task, current_done, task.bytes_total)
                 task.subtask_done += 1
-                task.current_file = os.path.basename(file_key)
+                task.current_file = label
 
         def worker() -> None:
             while not stop_state["triggered"]:
@@ -1679,8 +1800,9 @@ class TaskScheduler:
     def _inspect_download_target_state(local_path: str, file_size: int) -> tuple[bool, int]:
         skip_file = False
         offset = 0
-        if os.path.exists(local_path):
-            local_size = os.path.getsize(local_path)
+        fs_local_path = to_local_fs_path(local_path)
+        if os.path.exists(fs_local_path):
+            local_size = os.path.getsize(fs_local_path)
             if local_size == file_size:
                 skip_file = True
             elif local_size < file_size:
@@ -1717,12 +1839,25 @@ class TaskScheduler:
             try:
                 if should_disconnect:
                     engine.connect()
-                engine.upload_file(
-                    local_archive,
-                    remote_archive,
-                    callback=lambda done, _total: add_progress(min(total_bytes, int(done * total_bytes / archive_size))),
-                    check_interrupt=self._interrupt_checker(task),
-                )
+                if archive_size >= self.folder_bundle_parallel_threshold:
+                    parallel_engine = ParallelSftpEngine(
+                        site,
+                        self.logger,
+                        preset_name=self.folder_bundle_parallel_upload_preset,
+                    )
+                    parallel_engine.upload_file(
+                        local_archive,
+                        remote_archive,
+                        callback=lambda done, _total: add_progress(min(total_bytes, int(done * total_bytes / archive_size))),
+                        check_interrupt=self._interrupt_checker(task),
+                    )
+                else:
+                    engine.upload_file(
+                        local_archive,
+                        remote_archive,
+                        callback=lambda done, _total: add_progress(min(total_bytes, int(done * total_bytes / archive_size))),
+                        check_interrupt=self._interrupt_checker(task),
+                    )
                 extract_cmd = (
                     "sh -lc "
                     + shlex.quote(
@@ -1779,12 +1914,25 @@ class TaskScheduler:
                     raise SSHFerryError(ErrorCode.TRANSFER_FAILED, std_err.strip() or "Remote bundle creation failed")
                 archive_size = max(1, engine.stat(remote_archive).size)
                 total_bytes = max(0, sum(int(item["size"]) for item in files))
-                engine.download_file(
-                    remote_archive,
-                    local_archive,
-                    callback=lambda done, _total: add_progress(min(total_bytes, int(done * total_bytes / archive_size))),
-                    check_interrupt=self._interrupt_checker(task),
-                )
+                if archive_size >= self.folder_bundle_parallel_threshold:
+                    parallel_engine = ParallelSftpEngine(
+                        site,
+                        self.logger,
+                        preset_name=self.folder_bundle_parallel_download_preset,
+                    )
+                    parallel_engine.download_file(
+                        remote_archive,
+                        local_archive,
+                        callback=lambda done, _total: add_progress(min(total_bytes, int(done * total_bytes / archive_size))),
+                        check_interrupt=self._interrupt_checker(task),
+                    )
+                else:
+                    engine.download_file(
+                        remote_archive,
+                        local_archive,
+                        callback=lambda done, _total: add_progress(min(total_bytes, int(done * total_bytes / archive_size))),
+                        check_interrupt=self._interrupt_checker(task),
+                    )
             finally:
                 try:
                     engine.remove_file(remote_archive)
@@ -1793,7 +1941,7 @@ class TaskScheduler:
                 if should_disconnect:
                     engine.disconnect()
             with tarfile.open(local_archive, "r") as archive:
-                archive.extractall(local_dir)
+                archive.extractall(to_local_fs_path(local_dir))
         finally:
             if local_archive and os.path.exists(local_archive):
                 os.remove(local_archive)

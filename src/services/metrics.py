@@ -14,6 +14,8 @@ from pathlib import Path
 import tempfile
 from typing import Dict, List, Optional
 
+from src.shared.runtime_paths import app_data_dir
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,13 +62,7 @@ class PresetStats:
 
 def _default_metrics_path() -> Path:
     """Return platform-appropriate metrics storage path."""
-    import sys
-    if sys.platform == "win32":
-        base = Path.home() / "AppData" / "Local" / "SSHFerry"
-    else:
-        base = Path.home() / ".config" / "sshferry"
-    base.mkdir(parents=True, exist_ok=True)
-    return base / "metrics.json"
+    return app_data_dir() / "metrics.json"
 
 
 def _atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> None:

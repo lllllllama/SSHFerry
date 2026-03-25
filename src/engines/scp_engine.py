@@ -20,7 +20,7 @@ from src.shared.errors import (
     SSHFerryError,
 )
 from src.shared.models import SiteConfig
-from src.shared.paths import ensure_in_sandbox, normalize_remote_path
+from src.shared.paths import ensure_in_sandbox, normalize_remote_path, to_local_fs_path
 
 
 class ScpEngine:
@@ -105,7 +105,8 @@ class ScpEngine:
 
         ensure_in_sandbox(remote_path, self.site_config.remote_root)
         normalized_path = normalize_remote_path(remote_path)
-        file_size = os.path.getsize(local_path)
+        fs_local_path = to_local_fs_path(local_path)
+        file_size = os.path.getsize(fs_local_path)
 
         def _progress(_filename: str, size: int, sent: int):
             if check_interrupt and check_interrupt():
@@ -115,7 +116,7 @@ class ScpEngine:
 
         try:
             self.scp_client.put(
-                local_path,
+                fs_local_path,
                 remote_path=normalized_path,
                 recursive=False,
                 preserve_times=True,
@@ -143,7 +144,8 @@ class ScpEngine:
 
         ensure_in_sandbox(remote_path, self.site_config.remote_root)
         normalized_path = normalize_remote_path(remote_path)
-        Path(local_path).parent.mkdir(parents=True, exist_ok=True)
+        fs_local_path = to_local_fs_path(local_path)
+        Path(fs_local_path).parent.mkdir(parents=True, exist_ok=True)
 
         def _progress(_filename: str, size: int, sent: int):
             if check_interrupt and check_interrupt():
@@ -154,7 +156,7 @@ class ScpEngine:
         try:
             self.scp_client.get(
                 normalized_path,
-                local_path=local_path,
+                local_path=fs_local_path,
                 recursive=False,
                 preserve_times=True,
                 progress=_progress,

@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from src.shared.models import RemoteEntry
 from src.ui.theme import TOKENS, alpha_hex, mono_font
+from src.ui.widgets.feedback import install_button_feedback
 
 
 @dataclass
@@ -147,6 +148,7 @@ class RemotePanel(QWidget):
     # New signal for lazy loading
     request_expand = Signal(str, QTreeWidgetItem)  # path, item to populate
     ROLE_EMPTY_LOADED = Qt.UserRole + 1
+    POPULATE_BATCH_SIZE = 200
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -157,6 +159,11 @@ class RemotePanel(QWidget):
         self._base_tree_stylesheet = ""
         self._drag_saved_current_item = None
         self._drag_saved_selected_items = []
+        self._population_generations: dict[str, int] = {}
+        self._drag_pulse_on = False
+        self._drag_pulse_timer = QTimer(self)
+        self._drag_pulse_timer.setInterval(220)
+        self._drag_pulse_timer.timeout.connect(self._toggle_drag_pulse)
         self._init_ui()
 
     def _init_ui(self):
@@ -225,6 +232,7 @@ class RemotePanel(QWidget):
         self.setAcceptDrops(True)
 
         layout.addWidget(self.tree)
+        install_button_feedback(self)
 
     # ------------------------------------------------------------------
     # Public API
@@ -244,19 +252,14 @@ class RemotePanel(QWidget):
 
     def reset_view_state(self):
         """Clear visible items and any pending restore state."""
+        self._population_generations.clear()
         self.tree.clear()
 
     def set_root_entries(self, entries: list[RemoteEntry], preserve_state: bool = False):
         """Populate the root level of the tree."""
         restore_state = self._capture_restore_state() if preserve_state else None
-        self.tree.setUpdatesEnabled(False)
-        try:
-            self.tree.clear()
-            self.populate_node(self.tree.invisibleRootItem(), entries, restore_state=restore_state)
-        finally:
-            self.tree.setUpdatesEnabled(True)
-        if restore_state:
-            self._schedule_restore_view_anchor(restore_state)
+        self.tree.clear()
+        self._start_population(self.tree.invisibleRootItem(), entries, restore_state, scope_key="__root__")
 
     def populate_node(
         self,
@@ -270,33 +273,51 @@ class RemotePanel(QWidget):
             return
         if restore_state is None and preserve_state:
             restore_state = self._capture_restore_state(item)
-        manage_updates = restore_state is not None and item != self.tree.invisibleRootItem()
-        if manage_updates:
+        entry = item.data(0, Qt.UserRole) if item != self.tree.invisibleRootItem() else None
+        scope_key = entry.path if entry else "__root__"
+        self._start_population(item, entries, restore_state, scope_key=scope_key)
+
+    def _start_population(
+        self,
+        item: QTreeWidgetItem,
+        entries: list[RemoteEntry],
+        restore_state: TreeRestoreState | None,
+        *,
+        scope_key: str,
+    ) -> None:
+        generation = self._population_generations.get(scope_key, 0) + 1
+        self._population_generations[scope_key] = generation
+        item.takeChildren()
+        item.setData(0, self.ROLE_EMPTY_LOADED, False)
+        sorted_entries = sorted(entries, key=lambda e: (not e.is_dir, e.name.lower()))
+
+        def process_batch(start_index: int = 0) -> None:
+            if self._population_generations.get(scope_key) != generation:
+                return
+            if not isValid(item):
+                return
+            end_index = min(start_index + self.POPULATE_BATCH_SIZE, len(sorted_entries))
             self.tree.setUpdatesEnabled(False)
-        try:
-            # Clear existing children (usually the 'loading' dummy)
-            item.takeChildren()
-            item.setData(0, self.ROLE_EMPTY_LOADED, False)
-
-            sorted_entries = sorted(entries, key=lambda e: (not e.is_dir, e.name.lower()))
-
-            for entry in sorted_entries:
-                self._append_entry_item(item, entry, restore_state)
-
-            # Keep an expansion handle for empty folders so users can collapse back.
-            if item != self.tree.invisibleRootItem() and not sorted_entries:
-                empty = QTreeWidgetItem(item)
-                empty.setText(0, "(empty)")
-                empty.setDisabled(True)
-                item.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
-                item.setData(0, self.ROLE_EMPTY_LOADED, True)
-
-            self._restore_tree_state_for_children(item, restore_state)
-        finally:
-            if manage_updates:
+            try:
+                for entry in sorted_entries[start_index:end_index]:
+                    self._append_entry_item(item, entry, restore_state)
+                if end_index >= len(sorted_entries):
+                    if item != self.tree.invisibleRootItem() and not sorted_entries:
+                        empty = QTreeWidgetItem(item)
+                        empty.setText(0, "(empty)")
+                        empty.setDisabled(True)
+                        item.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
+                        item.setData(0, self.ROLE_EMPTY_LOADED, True)
+                    self._restore_tree_state_for_children(item, restore_state)
+            finally:
                 self.tree.setUpdatesEnabled(True)
-        if restore_state and item != self.tree.invisibleRootItem():
-            self._schedule_restore_view_anchor(restore_state)
+            if end_index < len(sorted_entries):
+                QTimer.singleShot(0, lambda next_index=end_index: process_batch(next_index))
+                return
+            if restore_state:
+                self._schedule_restore_view_anchor(restore_state)
+
+        process_batch()
 
     def get_selected_entries(self) -> list[RemoteEntry]:
         """Return all selected RemoteEntry objects."""
@@ -715,19 +736,17 @@ class RemotePanel(QWidget):
         if self._drag_anim_active:
             return
         self._drag_anim_active = True
-        self.tree.setStyleSheet(
-            self._base_tree_stylesheet
-            + (
-                f"QTreeWidget {{ border: 2px solid {TOKENS.success}; "
-                f"background-color: {alpha_hex(TOKENS.success, 0.08)}; }}"
-            )
-        )
         self._drag_saved_current_item = self.tree.currentItem()
         self._drag_saved_selected_items = list(self.tree.selectedItems())
+        self._drag_pulse_on = False
+        self._apply_drag_stylesheet()
+        self._drag_pulse_timer.start()
 
     def _stop_drag_animation(self):
         """Restore previous selection state after drag feedback."""
         self._drag_anim_active = False
+        self._drag_pulse_timer.stop()
+        self._drag_pulse_on = False
         self.tree.setStyleSheet(self._base_tree_stylesheet)
         self.tree.clearSelection()
         for item in self._drag_saved_selected_items:
@@ -736,5 +755,24 @@ class RemotePanel(QWidget):
             self.tree.setCurrentItem(self._drag_saved_current_item)
         self._drag_saved_current_item = None
         self._drag_saved_selected_items = []
+
+    def _toggle_drag_pulse(self):
+        if not self._drag_anim_active:
+            return
+        self._drag_pulse_on = not self._drag_pulse_on
+        self._apply_drag_stylesheet()
+
+    def _apply_drag_stylesheet(self):
+        border_color = TOKENS.accent
+        background = alpha_hex(TOKENS.accent, 0.12 if self._drag_pulse_on else 0.08)
+        selection = alpha_hex(TOKENS.accent, 0.24 if self._drag_pulse_on else 0.18)
+        self.tree.setStyleSheet(
+            self._base_tree_stylesheet
+            + (
+                f"QTreeWidget {{ border: 2px solid {border_color}; background-color: {background}; }}"
+                f"QTreeWidget::item:selected {{ background-color: {selection}; "
+                f"color: {TOKENS.text_main}; font-weight: 700; }}"
+            )
+        )
 
 

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from src.shared.models import SiteConfig
 from src.ui.theme import TOKENS
+from src.ui.widgets.feedback import install_button_feedback
 
 
 class SiteEditorDialog(QDialog):
@@ -142,6 +143,7 @@ class SiteEditorDialog(QDialog):
         layout.addWidget(button_box)
 
         self._on_auth_method_changed("password")
+        install_button_feedback(self)
 
     def _parse_ssh_command(self):
         """Parse SSH command and populate fields."""

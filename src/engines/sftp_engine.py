@@ -4,6 +4,7 @@ import logging
 import os
 import shlex
 import socket
+import stat
 import time
 from pathlib import Path
 from typing import Callable, Optional
@@ -20,7 +21,7 @@ from src.shared.errors import (
 )
 from src.shared.errors import PermissionError as SFPermissionError
 from src.shared.models import RemoteEntry, SiteConfig
-from src.shared.paths import ensure_in_sandbox, normalize_remote_path
+from src.shared.paths import ensure_in_sandbox, normalize_remote_path, to_local_fs_path
 
 DEFAULT_STREAM_CHUNK_BYTES = 4 * 1024 * 1024  # 4 MB
 
@@ -186,10 +187,12 @@ class SftpEngine:
         try:
             entries = []
             for attr in self.sftp_client.listdir_attr(normalized_path):
+                entry_path = f"{normalized_path}/{attr.filename}".replace('//', '/')
+                entry_mode = attr.st_mode or 0
                 entry = RemoteEntry(
                     name=attr.filename,
-                    path=f"{normalized_path}/{attr.filename}".replace('//', '/'),
-                    is_dir=attr.st_mode is not None and (attr.st_mode & 0o170000) == 0o040000,
+                    path=entry_path,
+                    is_dir=stat.S_ISDIR(entry_mode),
                     size=attr.st_size or 0,
                     mtime=attr.st_mtime or 0,
                     mode=attr.st_mode,
@@ -344,7 +347,8 @@ class SftpEngine:
         normalized_path = normalize_remote_path(remote_path)
 
         try:
-            file_size = os.path.getsize(local_path)
+            fs_local_path = to_local_fs_path(local_path)
+            file_size = os.path.getsize(fs_local_path)
             chunk_size = DEFAULT_STREAM_CHUNK_BYTES
             
             # Determine mode based on offset
@@ -354,7 +358,7 @@ class SftpEngine:
                 
             bytes_transferred = offset
             
-            with open(local_path, 'rb') as local_file:
+            with open(fs_local_path, 'rb') as local_file:
                 if offset > 0:
                     local_file.seek(offset)
                     
@@ -414,7 +418,8 @@ class SftpEngine:
 
         try:
             # Ensure local directory exists
-            Path(local_path).parent.mkdir(parents=True, exist_ok=True)
+            fs_local_path = to_local_fs_path(local_path)
+            Path(fs_local_path).parent.mkdir(parents=True, exist_ok=True)
             
             # Get remote file size
             attr = self.sftp_client.stat(normalized_path)
@@ -439,7 +444,7 @@ class SftpEngine:
                 if offset > 0:
                     remote_file.seek(offset)
                     
-                with open(local_path, mode) as local_file:
+                with open(fs_local_path, mode) as local_file:
                     while True:
                         # Check for interruption
                         if check_interrupt and check_interrupt():

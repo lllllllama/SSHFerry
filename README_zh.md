@@ -247,9 +247,12 @@ powershell -ExecutionPolicy Bypass -File .\tools\build_windows.ps1 -Clean -VenvP
 
 ```text
 release/SSHFerry-<version>-windows/
+release/SSHFerry-<version>-windows/SSHFerry.exe
 release/SSHFerry-<version>-windows.zip
 release/SSHFerry-<version>-windows.sha256
 ```
+
+Release 鏋勫缓鐜板湪浼氳緭鍑哄崟鏂囦欢 `SSHFerry.exe`锛屽彲浠ョ洿鎺ュ鍒跺埌妗岄潰鍚庡弻鍑昏繍琛屻€俆`-Debug` 鏋勫缓浠嶇劧淇濈暀鐩綍寮忚緭鍑猴紝鏂逛究鎺掓煡鍚姩闂銆?
 
 <details>
 <summary><b>仓库结构</b></summary>

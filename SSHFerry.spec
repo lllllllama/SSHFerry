@@ -1,5 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import copy_metadata
+
 hiddenimports = [
     'src.ui.main_window',
     'src.ui.panels.local_panel',
@@ -16,7 +18,7 @@ a = Analysis(
     datas=[
         ('src\\ui\\assets\\app_icon.png', 'src\\ui\\assets'),
         ('src\\ui\\assets\\app_icon.ico', 'src\\ui\\assets'),
-    ],
+    ] + copy_metadata('paramiko'),
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -30,8 +32,9 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.datas,
     [],
-    exclude_binaries=True,
     name='SSHFerry',
     debug=False,
     bootloader_ignore_signals=False,
@@ -43,15 +46,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    contents_directory='.',
     icon='src\\ui\\assets\\app_icon.ico',
-)
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    name='SSHFerry',
 )

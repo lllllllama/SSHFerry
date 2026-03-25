@@ -877,6 +877,46 @@ def test_plan_remote_dir_transfer_populates_large_file_destinations():
     ]
 
 
+def test_scan_remote_dir_entries_fallback_skips_revisiting_canonical_paths():
+    src_site = _site("src")
+    dst_site = _site("dst")
+    logger = MagicMock()
+
+    with patch("src.engines.remote_transfer_engine.SftpEngine"):
+        from src.engines.remote_transfer_engine import RemoteToRemoteTransferEngine
+
+        engine = RemoteToRemoteTransferEngine(src_site, dst_site, logger, parallel_threshold=64)
+        calls: list[str] = []
+        src_engine = MagicMock()
+        src_engine.sftp_client = SimpleNamespace(
+            normalize=lambda path: "/data/src" if path == "/data/src/link" else path
+        )
+
+        def list_dir(path: str):
+            calls.append(path)
+            if path == "/data/src":
+                return [
+                    SimpleNamespace(name="link", path="/data/src/link", is_dir=True, size=0),
+                    SimpleNamespace(name="a.txt", path="/data/src/a.txt", is_dir=False, size=8),
+                ]
+            raise AssertionError(f"cycle path should not be traversed: {path}")
+
+        src_engine.list_dir.side_effect = list_dir
+
+        files, directories = engine._scan_remote_dir_entries(src_engine, "/data/src", "/data/dst")
+
+    assert calls == ["/data/src"]
+    assert directories == ["link"]
+    assert files == [
+        {
+            "src": "/data/src/a.txt",
+            "dst": "/data/dst/a.txt",
+            "rel_path": "a.txt",
+            "size": 8,
+        }
+    ]
+
+
 def test_remote_to_remote_dir_mixed_executes_large_files_and_small_bundles():
     src_site = _site("src")
     dst_site = _site("dst")

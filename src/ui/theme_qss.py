@@ -146,6 +146,11 @@ QPushButton:pressed {{
     background-color: {TOKENS.accent_soft};
 }}
 
+QPushButton[feedbackPressed="true"] {{
+    background-color: {alpha_hex(TOKENS.accent, 0.18)};
+    border: 2px solid {TOKENS.accent};
+}}
+
 QPushButton[variant="primary"] {{
     background-color: {TOKENS.accent};
     border-color: {TOKENS.accent_strong};
@@ -199,6 +204,11 @@ QPushButton#siteActionButton:hover {{
 
 QPushButton#siteActionButton:pressed {{
     background-color: {TOKENS.accent_soft};
+}}
+
+QPushButton#siteActionButton[feedbackPressed="true"] {{
+    background-color: {alpha_hex(TOKENS.accent, 0.16)};
+    border: 2px solid {TOKENS.accent};
 }}
 
 QListWidget, QTreeView, QTreeWidget, QTableWidget, QTextEdit#logOutput {{

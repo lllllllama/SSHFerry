@@ -40,12 +40,14 @@ from src.services.site_store import SiteStore
 from src.shared.errors import SSHFerryError
 from src.shared.logging_ import setup_logger
 from src.shared.models import RemoteEntry, SiteConfig
-from src.shared.paths import ensure_in_sandbox, get_remote_parent, join_remote_path
+from src.shared.paths import ensure_in_sandbox, get_remote_parent, join_remote_path, normalize_remote_path
+from src.shared.remote_scan import summarize_remote_tree_via_shell
 from src.ui.theme import TOKENS
 from src.ui.panels.local_panel import LocalPanel
 from src.ui.panels.remote_panel import RemotePanel
 from src.ui.panels.task_center import TaskCenterPanel
 from src.ui.widgets.site_editor import SiteEditorDialog
+from src.ui.widgets.feedback import install_button_feedback
 
 
 class ConnectionCheckThread(QThread):
@@ -115,7 +117,7 @@ class RemoteOpThread(QThread):
 
 
 class ScanRemoteDirThread(QThread):
-    scan_completed = Signal(str, int, int)
+    scan_completed = Signal(str, object, object)
     scan_failed = Signal(str, str)
 
     def __init__(self, site_config: SiteConfig, remote_path: str):
@@ -127,7 +129,11 @@ class ScanRemoteDirThread(QThread):
         engine = SftpEngine(self.site_config)
         try:
             engine.connect()
-            total_files, total_bytes = self._scan_recursive(engine, self.remote_path)
+            fast_summary = summarize_remote_tree_via_shell(engine, self.remote_path)
+            if fast_summary is not None:
+                total_files, total_bytes = fast_summary
+            else:
+                total_files, total_bytes = self._scan_recursive(engine, self.remote_path)
             self.scan_completed.emit(self.remote_path, total_files, total_bytes)
         except SSHFerryError as exc:
             self.scan_failed.emit(self.remote_path, f"[{exc.code.name}] {exc.message}")
@@ -140,11 +146,18 @@ class ScanRemoteDirThread(QThread):
                 pass
 
     def _scan_recursive(self, engine: SftpEngine, path: str) -> tuple[int, int]:
+        return self._scan_recursive_inner(engine, path, visited=set())
+
+    def _scan_recursive_inner(self, engine: SftpEngine, path: str, visited: set[str]) -> tuple[int, int]:
+        canonical_path = self._canonical_remote_walk_path(engine, path)
+        if canonical_path in visited:
+            return 0, 0
+        visited.add(canonical_path)
         total_files = 0
         total_bytes = 0
         for entry in engine.list_dir(path):
             if entry.is_dir:
-                sub_files, sub_bytes = self._scan_recursive(engine, entry.path)
+                sub_files, sub_bytes = self._scan_recursive_inner(engine, entry.path, visited)
                 total_files += sub_files
                 total_bytes += sub_bytes
             else:
@@ -152,9 +165,23 @@ class ScanRemoteDirThread(QThread):
                 total_bytes += entry.size
         return total_files, total_bytes
 
+    @staticmethod
+    def _canonical_remote_walk_path(engine: SftpEngine, remote_path: str) -> str:
+        normalized_path = normalize_remote_path(remote_path)
+        sftp_client = getattr(engine, "sftp_client", None)
+        normalize_fn = getattr(sftp_client, "normalize", None)
+        if callable(normalize_fn):
+            try:
+                resolved_path = normalize_fn(normalized_path)
+            except Exception:
+                return normalized_path
+            if isinstance(resolved_path, str) and resolved_path:
+                return normalize_remote_path(resolved_path)
+        return normalized_path
+
 
 class ScanLocalDirThread(QThread):
-    scan_completed = Signal(str, int, int)
+    scan_completed = Signal(str, object, object)
     scan_failed = Signal(str, str)
 
     def __init__(self, local_path: str):
@@ -190,6 +217,7 @@ class RemoteSession:
     panel: RemotePanel
     container: QWidget
     status_label: QLabel
+    refresh_button: QPushButton
     selected_box: QCheckBox
     selector: QComboBox
     connected: bool = False
@@ -212,6 +240,12 @@ class MainWindow(QMainWindow):
         self.sessions: dict[str, RemoteSession] = {}
         self._session_order: list[str] = []
         self._active_session_id: str | None = None
+        self._list_request_counter = 0
+        self._inflight_list_requests: dict[tuple[str, str, str], int] = {}
+        self._pending_list_requests: dict[tuple[str, str, str], dict] = {}
+        self._latest_list_response_ids: dict[tuple[str, str] | tuple[str, str, str], int] = {}
+        self._session_list_activity: dict[str, int] = {}
+        self._topbar_snapshot: tuple[int, int, int] | None = None
 
         self.setWindowTitle(f"SSHFerry #{self._window_number}")
         self.resize(1520, 900)
@@ -402,7 +436,8 @@ class MainWindow(QMainWindow):
 
         self._task_timer = QTimer()
         self._task_timer.timeout.connect(self._refresh_tasks)
-        self._task_timer.start(350)
+        self._task_timer.start(500)
+        install_button_feedback(self)
         self._update_site_action_buttons()
 
     def _show_site_context_menu(self, pos):
@@ -687,7 +722,7 @@ class MainWindow(QMainWindow):
         panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout.addWidget(panel, 1)
 
-        session = RemoteSession(session_id, site, panel, container, status_label, selected_box, selector)
+        session = RemoteSession(session_id, site, panel, container, status_label, btn_refresh, selected_box, selector)
         selector.currentIndexChanged.connect(lambda _idx, sid=session_id: self._switch_session_site(sid))
         panel.tree.itemPressed.connect(lambda _item, _col, sid=session_id: self._set_active_session(sid))
         panel.entry_activated.connect(lambda entry, sid=session_id: self._on_remote_entry_activated(sid, entry))
@@ -730,16 +765,27 @@ class MainWindow(QMainWindow):
         session = self.sessions.get(session_id)
         if not session:
             return
+        previous_active = self._active_session_id
         self.sessions.pop(session_id, None)
         if session_id in self._session_order:
             self._session_order.remove(session_id)
         if self._active_session_id == session_id:
             self._active_session_id = self._session_order[-1] if self._session_order else None
+        self._session_list_activity.pop(session_id, None)
+        self._inflight_list_requests = {
+            key: value for key, value in self._inflight_list_requests.items() if key[0] != session_id
+        }
+        self._pending_list_requests = {
+            key: value for key, value in self._pending_list_requests.items() if key[0] != session_id
+        }
+        self._latest_list_response_ids = {
+            key: value for key, value in self._latest_list_response_ids.items() if key[0] != session_id
+        }
         session.container.setParent(None)
         session.container.deleteLater()
         self._refresh_remote_area()
         self._rebalance_remote_splitter()
-        self._update_active_session_styles()
+        self._update_active_session_styles(previous_active, self._active_session_id)
         self._update_site_action_buttons()
 
     def _close_sessions_for_site(self, site_name: str):
@@ -756,6 +802,17 @@ class MainWindow(QMainWindow):
         if not site:
             return
         session.site = site
+        self._session_list_activity.pop(session_id, None)
+        session.refresh_button.setEnabled(True)
+        self._inflight_list_requests = {
+            key: value for key, value in self._inflight_list_requests.items() if key[0] != session_id
+        }
+        self._pending_list_requests = {
+            key: value for key, value in self._pending_list_requests.items() if key[0] != session_id
+        }
+        self._latest_list_response_ids = {
+            key: value for key, value in self._latest_list_response_ids.items() if key[0] != session_id
+        }
         session.panel.set_session_context(session_id, site.name)
         session.panel.reset_view_state()
         session.panel.set_path(site.remote_root or "/")
@@ -789,6 +846,56 @@ class MainWindow(QMainWindow):
         session.panel.set_session_context(session_id, site.name)
         self._list_remote_dir(session_id, target_path or site.remote_root, retry_on_failure=False)
 
+    @staticmethod
+    def _list_request_scope(parent_item: Optional[QTreeWidgetItem]) -> str:
+        return "node" if parent_item is not None else "root"
+
+    def _list_request_key(
+        self,
+        session_id: str,
+        path: str,
+        parent_item: Optional[QTreeWidgetItem],
+    ) -> tuple[str, str, str]:
+        return (session_id, self._list_request_scope(parent_item), path)
+
+    def _list_response_scope_key(
+        self,
+        session_id: str,
+        path: str,
+        parent_item: Optional[QTreeWidgetItem],
+    ) -> tuple[str, str] | tuple[str, str, str]:
+        scope = self._list_request_scope(parent_item)
+        if scope == "root":
+            return (session_id, scope)
+        return (session_id, scope, path)
+
+    def _begin_session_list_activity(self, session_id: str) -> None:
+        session = self.sessions.get(session_id)
+        if not session:
+            return
+        active = self._session_list_activity.get(session_id, 0) + 1
+        self._session_list_activity[session_id] = active
+        if active == 1:
+            session.refresh_button.setEnabled(False)
+
+    def _end_session_list_activity(self, session_id: str) -> None:
+        session = self.sessions.get(session_id)
+        if not session:
+            self._session_list_activity.pop(session_id, None)
+            return
+        active = max(0, self._session_list_activity.get(session_id, 0) - 1)
+        if active == 0:
+            self._session_list_activity.pop(session_id, None)
+            session.refresh_button.setEnabled(True)
+        else:
+            self._session_list_activity[session_id] = active
+
+    def _finalize_list_request(self, request_key: tuple[str, str, str]) -> None:
+        self._inflight_list_requests.pop(request_key, None)
+        pending = self._pending_list_requests.pop(request_key, None)
+        if pending:
+            self._list_remote_dir(**pending)
+
     def _list_remote_dir(
         self,
         session_id: str,
@@ -800,20 +907,61 @@ class MainWindow(QMainWindow):
         session = self.sessions.get(session_id)
         if not session:
             return
+        request_key = self._list_request_key(session_id, path, parent_item)
+        response_scope_key = self._list_response_scope_key(session_id, path, parent_item)
+        if request_key in self._inflight_list_requests:
+            self._pending_list_requests[request_key] = {
+                "session_id": session_id,
+                "path": path,
+                "parent_item": parent_item if parent_item and isValid(parent_item) else None,
+                "retry_on_failure": retry_on_failure,
+                "suppress_error_dialog": suppress_error_dialog,
+            }
+            return
+        self._list_request_counter += 1
+        request_id = self._list_request_counter
+        self._inflight_list_requests[request_key] = request_id
+        self._latest_list_response_ids[response_scope_key] = request_id
+        self._begin_session_list_activity(session_id)
         thread = ListDirThread(session.site, path, parent_item)
         thread.list_completed.connect(
-            lambda remote_path, entries, item, sid=session_id: self._on_list_completed(sid, remote_path, entries, item)
+            lambda remote_path, entries, item, sid=session_id, rid=request_id, rkey=request_key, scope_key=response_scope_key, site_name=session.site.name: self._on_list_completed(
+                sid,
+                remote_path,
+                entries,
+                item,
+                rid,
+                rkey,
+                scope_key,
+                site_name,
+            )
         )
         thread.list_failed.connect(
-            lambda remote_path, msg, sid=session_id, item=parent_item, retry=retry_on_failure, silent=suppress_error_dialog: self._on_list_failed(
-                sid, remote_path, msg, item, retry, silent
+            lambda remote_path, msg, sid=session_id, item=parent_item, retry=retry_on_failure, silent=suppress_error_dialog, rid=request_id, rkey=request_key, scope_key=response_scope_key, site_name=session.site.name: self._on_list_failed(
+                sid, remote_path, msg, item, retry, silent, rid, rkey, scope_key, site_name
             )
         )
         self._start_thread(thread)
 
-    def _on_list_completed(self, session_id: str, path: str, entries: list, parent_item: Optional[QTreeWidgetItem]):
+    def _on_list_completed(
+        self,
+        session_id: str,
+        path: str,
+        entries: list,
+        parent_item: Optional[QTreeWidgetItem],
+        request_id: int,
+        request_key: tuple[str, str, str],
+        response_scope_key: tuple[str, str] | tuple[str, str, str],
+        site_name: str,
+    ):
         session = self.sessions.get(session_id)
+        self._end_session_list_activity(session_id)
+        self._finalize_list_request(request_key)
         if not session:
+            return
+        if session.site.name != site_name:
+            return
+        if self._latest_list_response_ids.get(response_scope_key) != request_id:
             return
         if parent_item:
             target_item = parent_item if isValid(parent_item) else session.panel.find_item_by_path(path)
@@ -836,8 +984,19 @@ class MainWindow(QMainWindow):
         parent_item: Optional[QTreeWidgetItem] = None,
         retry_on_failure: bool = False,
         suppress_error_dialog: bool = False,
+        request_id: int = 0,
+        request_key: tuple[str, str, str] | None = None,
+        response_scope_key: tuple[str, str] | tuple[str, str, str] | None = None,
+        site_name: str | None = None,
     ):
         session = self.sessions.get(session_id)
+        self._end_session_list_activity(session_id)
+        if request_key is not None:
+            self._finalize_list_request(request_key)
+        if session and site_name and session.site.name != site_name:
+            return
+        if response_scope_key is not None and self._latest_list_response_ids.get(response_scope_key) != request_id:
+            return
         if retry_on_failure and session and self._ensure_site_credentials(session.site):
             self._log(f"Refreshing {session.site.name} after disconnect on {path}")
             self._list_remote_dir(
@@ -1179,11 +1338,28 @@ class MainWindow(QMainWindow):
     def _set_active_session(self, session_id: str):
         if session_id not in self.sessions:
             return
+        if session_id == self._active_session_id:
+            return
+        previous_session_id = self._active_session_id
         self._active_session_id = session_id
-        self._update_active_session_styles()
+        self._update_active_session_styles(previous_session_id, session_id)
 
-    def _update_active_session_styles(self):
-        for session_id, session in self.sessions.items():
+    def _update_active_session_styles(
+        self,
+        previous_session_id: str | None = None,
+        current_session_id: str | None = None,
+    ):
+        target_ids = {
+            sid
+            for sid in (previous_session_id, current_session_id, self._active_session_id)
+            if sid is not None
+        }
+        if not target_ids:
+            target_ids = set(self.sessions.keys())
+        for session_id in target_ids:
+            session = self.sessions.get(session_id)
+            if not session:
+                continue
             session.container.setProperty("active", session_id == self._active_session_id)
             session.container.style().unpolish(session.container)
             session.container.style().polish(session.container)
@@ -1206,6 +1382,8 @@ class MainWindow(QMainWindow):
         func(session_id, *args)
 
     def _refresh_tasks(self):
+        if not self.isVisible():
+            return
         tasks = self.scheduler.get_all_tasks()
         self.task_center.set_tasks(tasks)
         self._update_top_bar_status(tasks)
@@ -1293,10 +1471,14 @@ class MainWindow(QMainWindow):
         self._update_top_bar_status(self.scheduler.get_all_tasks())
 
     def _update_top_bar_status(self, tasks):
-        self.topbar_sites_label.setText(f"Sites: {len(self.sites)}")
-        self.topbar_sessions_label.setText(f"Sessions: {len(self.sessions)}")
         active_tasks = sum(1 for task in tasks if task.status in ("pending", "running", "paused"))
-        self.topbar_tasks_label.setText(f"Active Tasks: {active_tasks}")
+        snapshot = (len(self.sites), len(self.sessions), active_tasks)
+        if snapshot == self._topbar_snapshot:
+            return
+        self._topbar_snapshot = snapshot
+        self.topbar_sites_label.setText(f"Sites: {snapshot[0]}")
+        self.topbar_sessions_label.setText(f"Sessions: {snapshot[1]}")
+        self.topbar_tasks_label.setText(f"Active Tasks: {snapshot[2]}")
 
     def _log(self, msg: str):
         self.log_text.append(msg)

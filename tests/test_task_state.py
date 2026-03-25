@@ -39,9 +39,15 @@ class TestIsValidTransition:
     def test_paused_to_done_invalid(self):
         assert is_valid_transition("paused", "done") is False
 
+    def test_failed_to_pending_for_restart(self):
+        assert is_valid_transition("failed", "pending") is True
+
+    def test_done_to_pending_for_restart(self):
+        assert is_valid_transition("done", "pending") is True
+
     def test_terminal_states_have_no_outgoing(self):
         for state in TERMINAL_STATES:
-            for target in ["pending", "running", "paused", "done", "failed", "canceled"]:
+            for target in ["running", "paused", "done", "failed", "canceled"]:
                 assert is_valid_transition(state, target) is False
 
     def test_unknown_state_returns_false(self):

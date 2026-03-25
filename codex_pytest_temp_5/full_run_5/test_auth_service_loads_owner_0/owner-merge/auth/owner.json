@@ -1,0 +1,8 @@
+{
+  "id": "owner",
+  "username": "owner",
+  "display_name": "owner",
+  "role": "owner",
+  "password_hash": "pbkdf2_sha256$600000$O25xn1SbzSi8nuBv7vorjg$6CkRxhinr_zYQuyKInOA_-e2J_cBS_nVvzULw88ELqs",
+  "created_at": 1774421814
+}

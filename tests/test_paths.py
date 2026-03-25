@@ -8,6 +8,7 @@ from src.shared.paths import (
     get_remote_parent,
     join_remote_path,
     normalize_remote_path,
+    to_local_fs_path,
 )
 
 
@@ -123,3 +124,17 @@ class TestGetRemoteBasename:
         assert get_remote_basename("/root/autodl-tmp/test.txt") == "test.txt"
         assert get_remote_basename("/root/autodl-tmp") == "autodl-tmp"
         assert get_remote_basename("/root") == "root"
+
+
+class TestToLocalFsPath:
+    def test_non_windows_returns_raw_path(self, monkeypatch):
+        monkeypatch.setattr("src.shared.paths.sys.platform", "linux")
+        assert to_local_fs_path("/tmp/demo") == "/tmp/demo"
+
+    def test_windows_drive_path_uses_extended_prefix(self, monkeypatch):
+        monkeypatch.setattr("src.shared.paths.sys.platform", "win32")
+        assert to_local_fs_path(r"C:\demo\file.txt") == r"\\?\C:\demo\file.txt"
+
+    def test_windows_unc_path_uses_unc_prefix(self, monkeypatch):
+        monkeypatch.setattr("src.shared.paths.sys.platform", "win32")
+        assert to_local_fs_path(r"\\server\share\demo.txt") == r"\\?\UNC\server\share\demo.txt"

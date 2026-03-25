@@ -1,0 +1,10 @@
+[
+  {
+    "id": "user-17cd3d88c84345e8b54c6db255404f06",
+    "username": "alice",
+    "display_name": "alice",
+    "role": "operator",
+    "password_hash": "pbkdf2_sha256$600000$Pn-hSXaKSb6wwMm7MTcYNw$RiGdRYtCHvZ6gxt5xpyWQiU3HahVIFO62J1rbVqdlaI",
+    "created_at": 1774421813
+  }
+]

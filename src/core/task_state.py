@@ -5,10 +5,10 @@ TRANSITIONS: dict[str, set[str]] = {
     "pending": {"running", "canceled"},
     "running": {"done", "failed", "paused", "canceled", "skipped"},
     "paused": {"running", "pending", "canceled"},
-    "skipped": set(),
-    "done": set(),
-    "failed": set(),
-    "canceled": set(),
+    "skipped": {"pending"},
+    "done": {"pending"},
+    "failed": {"pending"},
+    "canceled": {"pending"},
 }
 
 ALL_STATES = set(TRANSITIONS.keys())

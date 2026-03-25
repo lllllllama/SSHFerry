@@ -12,7 +12,7 @@ from typing import Callable, Optional, Tuple
 from src.engines.sftp_engine import SftpEngine
 from src.shared.errors import ErrorCode, SSHFerryError
 from src.shared.models import SiteConfig
-from src.shared.paths import ensure_in_sandbox, normalize_remote_path
+from src.shared.paths import ensure_in_sandbox, normalize_remote_path, to_local_fs_path
 
 
 @dataclass(frozen=True)
@@ -199,14 +199,15 @@ class ParallelSftpEngine:
         """
         ensure_in_sandbox(remote_path, self.site_config.remote_root)
         normalized_remote_path = normalize_remote_path(remote_path)
-        file_size = os.path.getsize(local_path)
+        fs_local_path = to_local_fs_path(local_path)
+        file_size = os.path.getsize(fs_local_path)
         
         if file_size < self.chunk_size:
             # Fallback for small files
             engine = SftpEngine(self.site_config, self.logger)
             engine.connect()
             try:
-                engine.upload_file(local_path, normalized_remote_path, callback, check_interrupt)
+                engine.upload_file(fs_local_path, normalized_remote_path, callback, check_interrupt)
             finally:
                 engine.disconnect()
             return
@@ -253,7 +254,7 @@ class ParallelSftpEngine:
                     with lock:
                         connect_failures += 1
                     return
-                with open(local_path, 'rb') as f:
+                with open(fs_local_path, 'rb') as f:
                     with eng.sftp_client.open(normalized_remote_path, 'r+b') as rf:
                         if hasattr(rf, "set_pipelined"):
                             rf.set_pipelined(True)
@@ -368,6 +369,7 @@ class ParallelSftpEngine:
         """
         ensure_in_sandbox(remote_path, self.site_config.remote_root)
         normalized_remote_path = normalize_remote_path(remote_path)
+        fs_local_path = to_local_fs_path(local_path)
         # Get size
         init_engine = SftpEngine(self.site_config, self.logger)
         if not self._connect_with_retry(init_engine):
@@ -385,16 +387,16 @@ class ParallelSftpEngine:
             engine = SftpEngine(self.site_config, self.logger)
             engine.connect()
             try:
-                engine.download_file(normalized_remote_path, local_path, callback, check_interrupt)
+                engine.download_file(normalized_remote_path, fs_local_path, callback, check_interrupt)
             finally:
                 engine.disconnect()
             return
 
         # Pre-allocate local
-        parent_dir = os.path.dirname(local_path)
+        parent_dir = os.path.dirname(fs_local_path)
         if parent_dir:
             os.makedirs(parent_dir, exist_ok=True)
-        with open(local_path, 'wb') as f:
+        with open(fs_local_path, 'wb') as f:
             f.truncate(file_size)
 
         num_chunks = math.ceil(file_size / self.chunk_size)
@@ -422,7 +424,7 @@ class ParallelSftpEngine:
                         connect_failures += 1
                     return
                 with eng.sftp_client.open(normalized_remote_path, 'rb') as rf:
-                    with open(local_path, 'r+b') as f:
+                    with open(fs_local_path, 'r+b') as f:
                         while not interrupt_event.is_set():
                             try:
                                 offset, length = queue.get(timeout=0.5)

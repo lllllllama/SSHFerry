@@ -247,9 +247,12 @@ Expected outputs:
 
 ```text
 release/SSHFerry-<version>-windows/
+release/SSHFerry-<version>-windows/SSHFerry.exe
 release/SSHFerry-<version>-windows.zip
 release/SSHFerry-<version>-windows.sha256
 ```
+
+Release builds now ship as a single-file `SSHFerry.exe`, so you can copy that executable to the Desktop and launch it directly. `-Debug` builds remain folder-based to keep console diagnostics and unpacked dependencies visible.
 
 <details>
 <summary><b>Repository Layout</b></summary>

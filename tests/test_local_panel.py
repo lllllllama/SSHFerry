@@ -19,7 +19,22 @@ def test_local_panel_configures_icon_provider_and_tree():
     panel = LocalPanel()
 
     assert isinstance(panel.icon_provider, QFileIconProvider)
-    assert panel.model.iconProvider() is panel.icon_provider
+    assert panel.fs_model.iconProvider() is panel.icon_provider
     assert panel.tree.iconSize().width() == 18
     assert panel.tree.iconSize().height() == 18
-    assert panel.model.testOption(panel.model.Option.DontUseCustomDirectoryIcons) is True
+    assert panel.fs_model.testOption(panel.fs_model.Option.DontUseCustomDirectoryIcons) is True
+
+
+def test_local_panel_drag_animation_uses_pulse_highlight():
+    _app()
+    panel = LocalPanel()
+
+    panel._start_drag_animation()
+
+    assert panel._drag_pulse_timer.isActive() is True
+    assert "border: 2px solid" in panel.tree.styleSheet()
+
+    panel._stop_drag_animation()
+
+    assert panel._drag_pulse_timer.isActive() is False
+    assert panel.tree.styleSheet() == panel._base_tree_style
