@@ -14,6 +14,7 @@ __pycache__/
 .pyre/
 .hypothesis/
 pytest_temp_root/
+codex_pytest_temp_*/
 .tmp_test_*/
 
 # Test / coverage outputs
@@ -37,6 +38,7 @@ dist/
 release/
 site/
 pip-wheel-metadata/
+*.whl
 *.egg-info/
 *.egg
 .eggs/
@@ -55,6 +57,8 @@ pip-wheel-metadata/
 *.tmp
 *.bak
 *.orig
+.backend_runtime/
+.workspace/
 
 # Local environment configs
 .env
