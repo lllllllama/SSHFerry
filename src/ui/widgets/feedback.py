@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, QTimer
 from PySide6.QtWidgets import QPushButton, QWidget
+from shiboken6 import isValid
 
 
 class ButtonFeedbackController(QObject):
@@ -34,11 +35,12 @@ class ButtonFeedbackController(QObject):
 
     @staticmethod
     def _clear_pressed_state(button: QPushButton) -> None:
-        if button is None:
+        if button is None or not isValid(button):
             return
+        style = button.style()
         button.setProperty("feedbackPressed", False)
-        button.style().unpolish(button)
-        button.style().polish(button)
+        style.unpolish(button)
+        style.polish(button)
 
 
 def install_button_feedback(root: QWidget) -> None:

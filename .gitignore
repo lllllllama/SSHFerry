@@ -74,10 +74,45 @@ pip-wheel-metadata/
 .idea/
 *.iml
 
+# Local AI assistant / automation state
+/.adal/
+/.agents/
+/.augment/
+/.bob/
+/.claude/
+/.codebuddy/
+/.commandcode/
+/.continue/
+/.cortex/
+/.crush/
+/.factory/
+/.goose/
+/.iflow/
+/.junie/
+/.kilocode/
+/.kiro/
+/.kode/
+/.mcpjam/
+/.mux/
+/.neovate/
+/.openhands/
+/.pi/
+/.pochi/
+/.qoder/
+/.qwen/
+/.roo/
+/.trae/
+/.vibe/
+/.windsurf/
+/.zencoder/
+/skills/
+/skills-lock.json
+
 # OS files
 .DS_Store
 Thumbs.db
 
+mydocs/
 docs/
 !docs/
 !docs/frontend/
