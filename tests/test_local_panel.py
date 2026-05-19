@@ -3,7 +3,7 @@ import os
 
 from PySide6.QtWidgets import QApplication, QFileIconProvider
 
-from src.ui.panels.local_panel import LocalPanel
+from src.ui.panels.local_panel import LocalPanel, NameColumnDelegate
 
 
 def _app() -> QApplication:
@@ -22,6 +22,7 @@ def test_local_panel_configures_icon_provider_and_tree():
     assert panel.fs_model.iconProvider() is panel.icon_provider
     assert panel.tree.iconSize().width() == 18
     assert panel.tree.iconSize().height() == 18
+    assert isinstance(panel.tree.itemDelegateForColumn(0), NameColumnDelegate)
     assert panel.fs_model.testOption(panel.fs_model.Option.DontUseCustomDirectoryIcons) is True
 
 
@@ -43,6 +44,9 @@ def test_local_panel_drag_animation_uses_pulse_highlight():
 def test_local_panel_search_accepts_windows_style_patterns():
     _app()
     panel = LocalPanel()
+
+    assert panel.path_edit.objectName() == "localPathInput"
+    assert panel.search_edit.objectName() == "localSearchInput"
 
     panel.search_edit.setText("*.TXT")
 

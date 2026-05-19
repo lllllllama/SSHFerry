@@ -623,6 +623,7 @@ export function LocalPanel({ onQueueDownloads }: LocalPanelProps) {
             ? (entry) => buildLocalSearchLocation(entry.path, entry.name, currentPath)
             : undefined
         }
+        highlightQuery={isLocalSearchActive ? localSearchQuery : undefined}
         onSelect={(path, multi) => toggleLocalSelection(path, multi)}
         onActivate={(entry) => {
           if (entry.is_dir) {

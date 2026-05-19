@@ -40,6 +40,23 @@ class MetricsColumnDelegate(QStyledItemDelegate):
         option.font = mono_font(9)
 
 
+class NameColumnDelegate(QStyledItemDelegate):
+    """Give folder names a stronger weight while preserving native icons."""
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        model = index.model()
+        if model is None:
+            return
+        try:
+            file_info = model.fileInfo(index)
+        except Exception:
+            return
+        option.font.setPointSize(10)
+        if file_info.isDir():
+            option.font.setBold(True)
+
+
 class SizeColumnDelegate(MetricsColumnDelegate):
     """Render local file sizes with stable English units."""
 
@@ -343,6 +360,7 @@ class LocalPanel(QWidget):
         nav.addWidget(self.btn_refresh)
 
         self.path_edit = QLineEdit(self.current_dir)
+        self.path_edit.setObjectName("localPathInput")
         self.path_edit.setFixedHeight(34)
         self.path_edit.returnPressed.connect(self._on_path_entered)
         nav.addWidget(self.path_edit)
@@ -356,6 +374,7 @@ class LocalPanel(QWidget):
         search.setSpacing(TOKENS.spacing_xs)
 
         self.search_edit = QLineEdit()
+        self.search_edit.setObjectName("localSearchInput")
         self.search_edit.setFixedHeight(34)
         self.search_edit.setPlaceholderText("Search current folder (*.log, .py, report)")
         self.search_edit.setToolTip("Search by name, extension, wildcard, or path fragment")
@@ -407,6 +426,7 @@ class LocalPanel(QWidget):
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
         self.tree.setItemDelegateForColumn(1, SizeColumnDelegate(self.tree))
         self.tree.setItemDelegateForColumn(3, DateColumnDelegate(self.tree))
+        self.tree.setItemDelegateForColumn(0, NameColumnDelegate(self.tree))
 
         # Hide unnecessary columns (keep Name, Size, Date Modified)
         self.tree.setColumnHidden(2, True)  # Type column

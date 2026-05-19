@@ -24,6 +24,7 @@ interface FileTableProps<T extends FileLike> {
   onSelect: (path: string, multi: boolean) => void;
   onActivate: (entry: T) => void;
   getEntrySubtitle?: (entry: T) => string | null;
+  highlightQuery?: string;
   dragPayloadFactory?: (entry: T) => TransferDragPayload | null;
   onDropTransfer?: (payload: TransferDragPayload, targetPath: string) => void;
 }
@@ -40,6 +41,64 @@ function readDragPayload(event: React.DragEvent<HTMLElement>): TransferDragPaylo
   }
 }
 
+function buildHighlightTerms(query: string | undefined): string[] {
+  if (!query) {
+    return [];
+  }
+  return query
+    .split(/\s+/)
+    .map((term) => term.replace(/[*?[\]]/g, '').trim().toLowerCase())
+    .filter((term) => term.length > 0)
+    .sort((left, right) => right.length - left.length);
+}
+
+function renderHighlightedName(name: string, query: string | undefined) {
+  const terms = buildHighlightTerms(query);
+  if (!terms.length) {
+    return name;
+  }
+
+  const loweredName = name.toLowerCase();
+  const ranges: Array<[number, number]> = [];
+  for (const term of terms) {
+    let start = 0;
+    while (start < loweredName.length) {
+      const index = loweredName.indexOf(term, start);
+      if (index < 0) {
+        break;
+      }
+      const end = index + term.length;
+      if (!ranges.some(([rangeStart, rangeEnd]) => index < rangeEnd && end > rangeStart)) {
+        ranges.push([index, end]);
+      }
+      start = end;
+    }
+  }
+
+  if (!ranges.length) {
+    return name;
+  }
+
+  ranges.sort(([leftStart], [rightStart]) => leftStart - rightStart);
+  const pieces: JSX.Element[] = [];
+  let cursor = 0;
+  ranges.forEach(([start, end], index) => {
+    if (cursor < start) {
+      pieces.push(<span key={`text-${index}`}>{name.slice(cursor, start)}</span>);
+    }
+    pieces.push(
+      <mark key={`mark-${index}`} className="entry-name-match">
+        {name.slice(start, end)}
+      </mark>,
+    );
+    cursor = end;
+  });
+  if (cursor < name.length) {
+    pieces.push(<span key="text-tail">{name.slice(cursor)}</span>);
+  }
+  return pieces;
+}
+
 export function FileTable<T extends FileLike>(props: FileTableProps<T>) {
   const {
     entries,
@@ -52,6 +111,7 @@ export function FileTable<T extends FileLike>(props: FileTableProps<T>) {
     onSelect,
     onActivate,
     getEntrySubtitle,
+    highlightQuery,
     dragPayloadFactory,
     onDropTransfer,
   } = props;
@@ -174,7 +234,9 @@ export function FileTable<T extends FileLike>(props: FileTableProps<T>) {
                 <td className="name-cell" title={entry.path}>
                   <span className={`entry-icon ${entry.is_dir ? 'entry-dir' : 'entry-file'}`} />
                   <span className="entry-copy">
-                    <span className="entry-name">{entry.name}</span>
+                    <span className={`entry-name ${entry.is_dir ? 'entry-name-dir' : ''}`}>
+                      {renderHighlightedName(entry.name, highlightQuery)}
+                    </span>
                     {subtitle ? <span className="entry-subtitle">{subtitle}</span> : null}
                   </span>
                 </td>

@@ -1,0 +1,56 @@
+.local-search-bar {
+  padding-top: 10px;
+}
+
+.local-search-bar .inline-form-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.local-search-bar .mono-cell {
+  margin: 8px 0 0;
+}
+
+.file-table thead th {
+  font-weight: 700;
+}
+
+.entry-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.entry-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.entry-name-dir {
+  font-weight: 700;
+}
+
+.entry-subtitle {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.entry-name-match {
+  border-radius: 3px;
+  background: rgba(216, 145, 47, 0.2);
+  color: inherit;
+  font-weight: 800;
+  padding: 0 1px;
+}
+

@@ -91,6 +91,14 @@ QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QSpinBo
     border: 1px solid {TOKENS.accent};
 }}
 
+QLineEdit#localPathInput, QLineEdit#localSearchInput {{
+    font-size: 13px;
+}}
+
+QLineEdit#localSearchInput {{
+    font-weight: 600;
+}}
+
 QComboBox#sessionSiteSelector {{
     background-color: {alpha_hex(TOKENS.bg_panel_strong, 0.98)};
     border: 1px solid {alpha_hex(TOKENS.accent, 0.34)};
@@ -218,6 +226,7 @@ QListWidget, QTreeView, QTreeWidget, QTableWidget, QTextEdit#logOutput {{
     border-radius: {TOKENS.radius_md}px;
     gridline-color: {TOKENS.line_soft};
     outline: none;
+    font-size: 12px;
 }}
 
 QListWidget::item, QTreeView::item, QTreeWidget::item, QTableWidget::item {{
