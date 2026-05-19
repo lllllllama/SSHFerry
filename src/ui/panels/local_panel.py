@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QDir, QMimeData, QModelIndex, QSize, Qt, QUrl, Signal, QItemSelectionModel, QSortFilterProxyModel, QTimer
-from PySide6.QtGui import QColor, QDrag, QPainter, QPixmap
+from PySide6.QtGui import QColor, QDrag, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -53,7 +53,8 @@ class NameColumnDelegate(QStyledItemDelegate):
         except Exception:
             return
         option.font.setPointSize(10)
-        if file_info.isDir():
+        search_terms = getattr(model, "_search_terms", [])
+        if file_info.isDir() or search_terms:
             option.font.setBold(True)
 
 
@@ -368,15 +369,22 @@ class LocalPanel(QWidget):
         layout.addWidget(nav_frame)
 
         search_frame = QFrame()
-        search_frame.setObjectName("toolbarCard")
-        search = QHBoxLayout(search_frame)
-        search.setContentsMargins(TOKENS.spacing_sm, TOKENS.spacing_xs, TOKENS.spacing_sm, TOKENS.spacing_xs)
+        search_frame.setObjectName("localSearchBar")
+        search_outer = QVBoxLayout(search_frame)
+        search_outer.setContentsMargins(TOKENS.spacing_sm, TOKENS.spacing_xs, TOKENS.spacing_sm, TOKENS.spacing_xs)
+        search_outer.setSpacing(4)
+        search = QHBoxLayout()
+        search.setContentsMargins(0, 0, 0, 0)
         search.setSpacing(TOKENS.spacing_xs)
+
+        self.search_label = QLabel("Find")
+        self.search_label.setObjectName("localSearchLabel")
+        search.addWidget(self.search_label)
 
         self.search_edit = QLineEdit()
         self.search_edit.setObjectName("localSearchInput")
         self.search_edit.setFixedHeight(34)
-        self.search_edit.setPlaceholderText("Search current folder (*.log, .py, report)")
+        self.search_edit.setPlaceholderText("*.log, .py, report, folder name")
         self.search_edit.setToolTip("Search by name, extension, wildcard, or path fragment")
         self.search_edit.textChanged.connect(self._on_search_changed)
         search.addWidget(self.search_edit)
@@ -385,8 +393,14 @@ class LocalPanel(QWidget):
         self.btn_clear_search.setProperty("variant", "ghost")
         self.btn_clear_search.setMinimumWidth(66)
         self.btn_clear_search.setFixedHeight(34)
-        self.btn_clear_search.clicked.connect(self.search_edit.clear)
+        self.btn_clear_search.setEnabled(False)
+        self.btn_clear_search.clicked.connect(self._clear_search)
         search.addWidget(self.btn_clear_search)
+        search_outer.addLayout(search)
+
+        self.search_status = QLabel("")
+        self.search_status.setObjectName("localSearchStatus")
+        search_outer.addWidget(self.search_status)
 
         layout.addWidget(search_frame)
 
@@ -444,10 +458,34 @@ class LocalPanel(QWidget):
         self.setAcceptDrops(True)
 
         layout.addWidget(self.tree)
+        self.find_shortcut = QShortcut(QKeySequence.Find, self)
+        self.find_shortcut.activated.connect(self._focus_search)
+        self.clear_search_shortcut = QShortcut(QKeySequence(Qt.Key_Escape), self)
+        self.clear_search_shortcut.activated.connect(self._clear_search)
+        self._update_search_status()
         install_button_feedback(self)
 
     def _on_search_changed(self, text: str):
         self.model.set_search_text(text)
+        self.btn_clear_search.setEnabled(bool(text.strip()))
+        QTimer.singleShot(0, self._update_search_status)
+
+    def _focus_search(self):
+        self.search_edit.setFocus(Qt.ShortcutFocusReason)
+        self.search_edit.selectAll()
+
+    def _clear_search(self):
+        if self.search_edit.text():
+            self.search_edit.clear()
+        self._update_search_status()
+
+    def _update_search_status(self):
+        query = self.search_edit.text().strip()
+        if not query:
+            self.search_status.setText("Ready")
+            return
+        visible_count = self.model.rowCount(self.tree.rootIndex())
+        self.search_status.setText(f"{visible_count} visible / {query}")
 
     def _go_up(self):
         parent = str(Path(self.current_dir).parent)
@@ -461,6 +499,7 @@ class LocalPanel(QWidget):
         root_index = self.model.setRootPath(self.current_dir)
         self.tree.setRootIndex(root_index)
         self._apply_sort_state(sort_column, sort_order)
+        QTimer.singleShot(0, self._update_search_status)
 
     def _on_path_entered(self):
         path = self.path_edit.text().strip()
@@ -480,6 +519,7 @@ class LocalPanel(QWidget):
         self.path_edit.setText(path)
         self.tree.setRootIndex(self.model.setRootPath(path))
         self._apply_sort_state(sort_column, sort_order)
+        QTimer.singleShot(0, self._update_search_status)
         self.dir_changed.emit(path)
         # Sync drive combo selection
         self._sync_drive_combo()

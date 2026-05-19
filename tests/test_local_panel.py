@@ -47,10 +47,16 @@ def test_local_panel_search_accepts_windows_style_patterns():
 
     assert panel.path_edit.objectName() == "localPathInput"
     assert panel.search_edit.objectName() == "localSearchInput"
+    assert panel.search_label.text() == "Find"
+    assert panel.search_status.text() == "Ready"
+    assert panel.btn_clear_search.isEnabled() is False
+    assert panel.find_shortcut is not None
+    assert panel.clear_search_shortcut is not None
 
     panel.search_edit.setText("*.TXT")
 
     assert panel.model._search_terms == ["*.txt"]
+    assert panel.btn_clear_search.isEnabled() is True
     assert panel.model._search_score("Report.txt", "C:/work/Report.txt", panel.model._search_terms) == 0
     assert panel.model._search_score("notes.log", "C:/work/notes.log", panel.model._search_terms) is None
 
@@ -62,3 +68,4 @@ def test_local_panel_search_accepts_windows_style_patterns():
 
     assert panel.search_edit.text() == ""
     assert panel.model._search_terms == []
+    assert panel.search_status.text() == "Ready"

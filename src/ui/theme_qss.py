@@ -57,6 +57,24 @@ QFrame#toolbarCard, QWidget#toolbarCard {{
     border-radius: {TOKENS.radius_md}px;
 }}
 
+QFrame#localSearchBar {{
+    background-color: {alpha_hex(TOKENS.bg_panel_strong, 0.92)};
+    border: 1px solid {alpha_hex(TOKENS.accent, 0.18)};
+    border-radius: {TOKENS.radius_md}px;
+}}
+
+QLabel#localSearchLabel {{
+    min-width: 42px;
+    color: {TOKENS.text_main};
+    font-weight: 700;
+}}
+
+QLabel#localSearchStatus {{
+    color: {TOKENS.text_muted};
+    font-size: 11px;
+    font-weight: 600;
+}}
+
 QLabel#titleLabel {{
     font-size: 18px;
     font-weight: 700;
