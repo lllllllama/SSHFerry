@@ -85,6 +85,50 @@ def test_local_stat_returns_file_metadata():
     _run_in_temp_fs('stat', runner)
 
 
+def test_local_search_matches_subdirectories_and_windows_patterns():
+    def runner(base_dir: Path, store_path: Path):
+        target_dir = base_dir / 'workspace'
+        nested_dir = target_dir / 'Logs'
+        nested_dir.mkdir(parents=True)
+        (nested_dir / 'Deploy.LOG').write_text('ok', encoding='utf-8')
+        (target_dir / 'notes.txt').write_text('skip', encoding='utf-8')
+
+        with _build_test_client(store_path) as client:
+            response = client.get('/api/local-files/search', params={'path': str(target_dir), 'q': '*.log'})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body['query'] == '*.log'
+        assert body['total'] == 1
+        assert body['items'][0]['name'] == 'Deploy.LOG'
+        assert body['items'][0]['path'].lower().endswith('deploy.log')
+        assert body['scanned'] >= 2
+        assert body['truncated'] is False
+
+    _run_in_temp_fs('search_patterns', runner)
+
+
+def test_local_search_limits_results_and_reports_truncation():
+    def runner(base_dir: Path, store_path: Path):
+        target_dir = base_dir / 'workspace'
+        target_dir.mkdir()
+        for index in range(3):
+            (target_dir / f'report-{index}.txt').write_text('ok', encoding='utf-8')
+
+        with _build_test_client(store_path) as client:
+            response = client.get(
+                '/api/local-files/search',
+                params={'path': str(target_dir), 'q': 'report', 'limit': 2},
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body['total'] == 2
+        assert body['truncated'] is True
+
+    _run_in_temp_fs('search_limit', runner)
+
+
 def test_local_list_returns_404_for_missing_path():
     def runner(base_dir: Path, store_path: Path):
         missing = base_dir / 'missing-dir'

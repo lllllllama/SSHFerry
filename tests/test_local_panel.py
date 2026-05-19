@@ -38,3 +38,23 @@ def test_local_panel_drag_animation_uses_pulse_highlight():
 
     assert panel._drag_pulse_timer.isActive() is False
     assert panel.tree.styleSheet() == panel._base_tree_style
+
+
+def test_local_panel_search_accepts_windows_style_patterns():
+    _app()
+    panel = LocalPanel()
+
+    panel.search_edit.setText("*.TXT")
+
+    assert panel.model._search_terms == ["*.txt"]
+    assert panel.model._search_score("Report.txt", "C:/work/Report.txt", panel.model._search_terms) == 0
+    assert panel.model._search_score("notes.log", "C:/work/notes.log", panel.model._search_terms) is None
+
+    panel.search_edit.setText(".log")
+
+    assert panel.model._search_score("notes.LOG", "C:/work/notes.LOG", panel.model._search_terms) == 0
+
+    panel.btn_clear_search.click()
+
+    assert panel.search_edit.text() == ""
+    assert panel.model._search_terms == []

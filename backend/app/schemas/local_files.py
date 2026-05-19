@@ -44,6 +44,17 @@ class LocalStatResponse(BaseModel):
     entry: LocalEntryResponse
 
 
+class LocalSearchResponse(BaseModel):
+    """Search results rooted at a local directory."""
+
+    current_path: str
+    query: str
+    items: list[LocalEntryResponse]
+    total: int
+    scanned: int
+    truncated: bool
+
+
 class LocalPathQuery(BaseModel):
     """Shared query payload placeholder for documentation consistency."""
 

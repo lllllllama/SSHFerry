@@ -1,4 +1,5 @@
 """Local file system panel using QFileSystemModel."""
+import fnmatch
 import json
 import os
 import shutil
@@ -162,8 +163,12 @@ class LocalFileSortProxy(QSortFilterProxyModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._sort_order = Qt.AscendingOrder
+        self._root_path = ""
+        self._search_terms: list[str] = []
         self.setDynamicSortFilter(True)
         self.setSortCaseSensitivity(Qt.CaseInsensitive)
+        if hasattr(self, "setRecursiveFilteringEnabled"):
+            self.setRecursiveFilteringEnabled(True)
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
         source = self.sourceModel()
@@ -187,6 +192,25 @@ class LocalFileSortProxy(QSortFilterProxyModel):
         right_text = source.data(right, Qt.DisplayRole) or ""
         return str(left_text).casefold() < str(right_text).casefold()
 
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
+        if not self._search_terms:
+            return True
+
+        source = self.sourceModel()
+        if source is None:
+            return True
+
+        index = source.index(source_row, 0, source_parent)
+        if not index.isValid():
+            return False
+
+        file_info = source.fileInfo(index)
+        return self._search_score(file_info.fileName(), file_info.absoluteFilePath(), self._search_terms) is not None
+
+    def set_search_text(self, text: str) -> None:
+        self._search_terms = [term.casefold() for term in text.split() if term.strip()]
+        self.invalidateFilter()
+
     def sort(self, column: int, order: Qt.SortOrder = Qt.AscendingOrder) -> None:
         self._sort_order = order
         super().sort(column, order)
@@ -207,6 +231,7 @@ class LocalFileSortProxy(QSortFilterProxyModel):
         source = self.sourceModel()
         if source is None:
             return QModelIndex()
+        self._root_path = path
         return self.mapFromSource(source.setRootPath(path))
 
     def index_for_path(self, path: str) -> QModelIndex:
@@ -214,6 +239,32 @@ class LocalFileSortProxy(QSortFilterProxyModel):
         if source is None:
             return QModelIndex()
         return self.mapFromSource(source.index(path))
+
+    def _relative_display_path(self, absolute_path: str) -> str:
+        try:
+            return Path(absolute_path).resolve(strict=False).relative_to(
+                Path(self._root_path).resolve(strict=False)
+            ).as_posix()
+        except (OSError, ValueError):
+            return absolute_path.replace("\\", "/")
+
+    def _search_score(self, name: str, absolute_path: str, terms: list[str]) -> int | None:
+        name_folded = name.casefold()
+        relative_folded = self._relative_display_path(absolute_path).casefold()
+
+        for term in terms:
+            normalized_term = term.replace("\\", "/")
+            if any(char in normalized_term for char in "*?["):
+                if fnmatch.fnmatchcase(name_folded, normalized_term) or fnmatch.fnmatchcase(relative_folded, normalized_term):
+                    continue
+                return None
+            if normalized_term.startswith(".") and name_folded.endswith(normalized_term):
+                continue
+            if normalized_term in name_folded or normalized_term in relative_folded:
+                continue
+            return None
+
+        return 0
 
 
 class LocalPanel(QWidget):
@@ -298,6 +349,28 @@ class LocalPanel(QWidget):
 
         layout.addWidget(nav_frame)
 
+        search_frame = QFrame()
+        search_frame.setObjectName("toolbarCard")
+        search = QHBoxLayout(search_frame)
+        search.setContentsMargins(TOKENS.spacing_sm, TOKENS.spacing_xs, TOKENS.spacing_sm, TOKENS.spacing_xs)
+        search.setSpacing(TOKENS.spacing_xs)
+
+        self.search_edit = QLineEdit()
+        self.search_edit.setFixedHeight(34)
+        self.search_edit.setPlaceholderText("Search current folder (*.log, .py, report)")
+        self.search_edit.setToolTip("Search by name, extension, wildcard, or path fragment")
+        self.search_edit.textChanged.connect(self._on_search_changed)
+        search.addWidget(self.search_edit)
+
+        self.btn_clear_search = QPushButton("Clear")
+        self.btn_clear_search.setProperty("variant", "ghost")
+        self.btn_clear_search.setMinimumWidth(66)
+        self.btn_clear_search.setFixedHeight(34)
+        self.btn_clear_search.clicked.connect(self.search_edit.clear)
+        search.addWidget(self.btn_clear_search)
+
+        layout.addWidget(search_frame)
+
         # File system model
         self.icon_provider = QFileIconProvider()
         self.fs_model = QFileSystemModel()
@@ -352,6 +425,9 @@ class LocalPanel(QWidget):
 
         layout.addWidget(self.tree)
         install_button_feedback(self)
+
+    def _on_search_changed(self, text: str):
+        self.model.set_search_text(text)
 
     def _go_up(self):
         parent = str(Path(self.current_dir).parent)

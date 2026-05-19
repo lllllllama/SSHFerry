@@ -23,6 +23,7 @@ interface FileTableProps<T extends FileLike> {
   stale?: boolean;
   onSelect: (path: string, multi: boolean) => void;
   onActivate: (entry: T) => void;
+  getEntrySubtitle?: (entry: T) => string | null;
   dragPayloadFactory?: (entry: T) => TransferDragPayload | null;
   onDropTransfer?: (payload: TransferDragPayload, targetPath: string) => void;
 }
@@ -50,6 +51,7 @@ export function FileTable<T extends FileLike>(props: FileTableProps<T>) {
     stale,
     onSelect,
     onActivate,
+    getEntrySubtitle,
     dragPayloadFactory,
     onDropTransfer,
   } = props;
@@ -124,6 +126,7 @@ export function FileTable<T extends FileLike>(props: FileTableProps<T>) {
           {entries.map((entry) => {
             const selected = selectedPaths.includes(entry.path);
             const rowDrop = entry.is_dir && onDropTransfer;
+            const subtitle = getEntrySubtitle?.(entry);
             return (
               <tr
                 key={entry.path}
@@ -168,9 +171,12 @@ export function FileTable<T extends FileLike>(props: FileTableProps<T>) {
                   handleDrop(event, entry.path);
                 }}
               >
-                <td className="name-cell" title={entry.name}>
+                <td className="name-cell" title={entry.path}>
                   <span className={`entry-icon ${entry.is_dir ? 'entry-dir' : 'entry-file'}`} />
-                  <span className="entry-name">{entry.name}</span>
+                  <span className="entry-copy">
+                    <span className="entry-name">{entry.name}</span>
+                    {subtitle ? <span className="entry-subtitle">{subtitle}</span> : null}
+                  </span>
                 </td>
                 <td className="file-table-size-cell">{entry.is_dir ? '--' : formatBytes(entry.size)}</td>
                 <td className="file-table-modified-cell">{formatDateTime(entry.mtime)}</td>

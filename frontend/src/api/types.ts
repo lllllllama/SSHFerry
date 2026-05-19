@@ -160,6 +160,15 @@ export interface LocalListResponse {
   total: number;
 }
 
+export interface LocalSearchResponse {
+  current_path: string;
+  query: string;
+  items: LocalEntry[];
+  total: number;
+  scanned: number;
+  truncated: boolean;
+}
+
 export interface LocalStatResponse {
   entry: LocalEntry;
 }

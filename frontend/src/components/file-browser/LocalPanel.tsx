@@ -1,9 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { getHealth } from '../../api/auth';
 import { ApiError, getErrorMessage } from '../../api/http';
-import { listLocalDrives, listLocalFiles } from '../../api/localFiles';
+import { listLocalDrives, listLocalFiles, searchLocalFiles } from '../../api/localFiles';
 import {
   deleteWorkspaceItems,
   listWorkspaceItems,
@@ -26,6 +26,8 @@ interface LocalPanelProps {
 
 type BrowserFile = File & { webkitRelativePath?: string };
 
+const LOCAL_SEARCH_DEBOUNCE_MS = 180;
+
 function isAggregateUpload(relativePaths: string[]): boolean {
   return relativePaths.length > 1 || relativePaths.some((path) => path.includes('/'));
 }
@@ -33,6 +35,25 @@ function isAggregateUpload(relativePaths: string[]): boolean {
 function buildWorkspaceLabel(path: string): string {
   const normalized = path.trim() || '/';
   return `workspace:${normalized}`;
+}
+
+function normalizeDisplayPath(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+function buildLocalSearchLocation(entryPath: string, entryName: string, rootPath: string): string {
+  const root = normalizeDisplayPath(rootPath);
+  const fullPath = normalizeDisplayPath(entryPath);
+  const parentPath = normalizeDisplayPath(fullPath.slice(0, Math.max(0, fullPath.length - entryName.length)));
+  const rootKey = root.toLowerCase();
+  const parentKey = parentPath.toLowerCase();
+  if (root && parentKey === rootKey) {
+    return '.';
+  }
+  if (root && parentKey.startsWith(`${rootKey}/`)) {
+    return parentPath.slice(root.length + 1);
+  }
+  return parentPath || '.';
 }
 
 function buildUploadSourcePath(relativePaths: string[]): string {
@@ -121,6 +142,8 @@ export function LocalPanel({ onQueueDownloads }: LocalPanelProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const uploadMenuRef = useRef<HTMLDetailsElement | null>(null);
+  const [localSearchText, setLocalSearchText] = useState('');
+  const [debouncedLocalSearchText, setDebouncedLocalSearchText] = useState('');
   const localCurrentPath = useWorkspaceStore((state) => state.localCurrentPath);
   const localPathDraft = useWorkspaceStore((state) => state.localPathDraft);
   const localSelection = useWorkspaceStore((state) => state.localSelection);
@@ -153,6 +176,15 @@ export function LocalPanel({ onQueueDownloads }: LocalPanelProps) {
     enabled: isDirectLocalMode ? Boolean(currentPath.trim()) : true,
   });
 
+  const localSearchQuery = debouncedLocalSearchText.trim();
+  const isLocalSearchActive = isDirectLocalMode && Boolean(currentPath.trim()) && localSearchQuery.length > 0;
+  const localSearchResultQuery = useQuery({
+    queryKey: ['local-files-search', currentPath, localSearchQuery],
+    queryFn: () => searchLocalFiles(currentPath, localSearchQuery),
+    enabled: isLocalSearchActive,
+    staleTime: 5000,
+  });
+
   const statsQuery = useQuery({
     queryKey: ['workspace-stat', currentPath],
     queryFn: () => statWorkspacePath(currentPath),
@@ -163,7 +195,8 @@ export function LocalPanel({ onQueueDownloads }: LocalPanelProps) {
   const deleteMutation = useMutation({ mutationFn: deleteWorkspaceItems });
   const resetMutation = useMutation({ mutationFn: resetWorkspaceData });
 
-  const selectedEntries = listingQuery.data?.items.filter((entry) => localSelection.includes(entry.path)) ?? [];
+  const activeEntries = (isLocalSearchActive ? localSearchResultQuery.data?.items : listingQuery.data?.items) ?? [];
+  const selectedEntries = activeEntries.filter((entry) => localSelection.includes(entry.path));
   const summary = !isDirectLocalMode && statsQuery.data
     ? t('localPanel.summary', {
         files: statsQuery.data.file_count,
@@ -180,6 +213,13 @@ export function LocalPanel({ onQueueDownloads }: LocalPanelProps) {
   }, [isDirectLocalMode, localCurrentPath, localDrivesQuery.data?.items, setLocalPath]);
 
   useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setDebouncedLocalSearchText(localSearchText.trim());
+    }, LOCAL_SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(handle);
+  }, [localSearchText]);
+
+  useEffect(() => {
     if (!listingQuery.data) {
       return;
     }
@@ -189,7 +229,11 @@ export function LocalPanel({ onQueueDownloads }: LocalPanelProps) {
   }, [currentPath, listingQuery.data, setLocalPath]);
 
   async function refreshWorkspace() {
-    await Promise.all([listingQuery.refetch(), ...(!isDirectLocalMode ? [statsQuery.refetch()] : [])]);
+    await Promise.all([
+      listingQuery.refetch(),
+      ...(isLocalSearchActive ? [localSearchResultQuery.refetch()] : []),
+      ...(!isDirectLocalMode ? [statsQuery.refetch()] : []),
+    ]);
   }
 
   function closeUploadMenu() {
@@ -520,13 +564,65 @@ export function LocalPanel({ onQueueDownloads }: LocalPanelProps) {
           placeholder={isDirectLocalMode ? t('localPanel.localModePathPlaceholder') : t('localPanel.pathPlaceholder')}
         />
       </div>
+      {isDirectLocalMode ? (
+        <div className="path-bar local-search-bar" role="search">
+          <div className="inline-form-row">
+            <input
+              value={localSearchText}
+              onChange={(event) => setLocalSearchText(event.target.value)}
+              placeholder={t('localPanel.searchPlaceholder')}
+              aria-label={t('localPanel.searchLabel')}
+            />
+            <button
+              type="button"
+              className="ghost-button"
+              disabled={!localSearchText}
+              onClick={() => {
+                setLocalSearchText('');
+                setDebouncedLocalSearchText('');
+                setLocalSelection([]);
+              }}
+            >
+              {t('common.clear')}
+            </button>
+          </div>
+          {isLocalSearchActive && localSearchResultQuery.data ? (
+            <p className="mono-cell">
+              {t('localPanel.searchSummary', {
+                total: localSearchResultQuery.data.total,
+                scanned: localSearchResultQuery.data.scanned,
+                truncated: localSearchResultQuery.data.truncated,
+              })}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       <FileTable
-        entries={listingQuery.data?.items ?? []}
+        entries={activeEntries}
         selectedPaths={localSelection}
-        currentPath={listingQuery.data?.current_path || currentPath}
-        emptyMessage={isDirectLocalMode ? t('localPanel.localModeEmpty') : t('localPanel.empty')}
-        isLoading={listingQuery.isPending}
-        errorMessage={listingQuery.error ? getErrorMessage(listingQuery.error, t('localPanel.loadError')) : null}
+        currentPath={(isLocalSearchActive ? localSearchResultQuery.data?.current_path : listingQuery.data?.current_path) || currentPath}
+        emptyMessage={
+          isLocalSearchActive
+            ? t('localPanel.searchEmpty')
+            : isDirectLocalMode
+              ? t('localPanel.localModeEmpty')
+              : t('localPanel.empty')
+        }
+        isLoading={isLocalSearchActive ? localSearchResultQuery.isPending : listingQuery.isPending}
+        errorMessage={
+          isLocalSearchActive
+            ? localSearchResultQuery.error
+              ? getErrorMessage(localSearchResultQuery.error, t('localPanel.searchError'))
+              : null
+            : listingQuery.error
+              ? getErrorMessage(listingQuery.error, t('localPanel.loadError'))
+              : null
+        }
+        getEntrySubtitle={
+          isLocalSearchActive
+            ? (entry) => buildLocalSearchLocation(entry.path, entry.name, currentPath)
+            : undefined
+        }
         onSelect={(path, multi) => toggleLocalSelection(path, multi)}
         onActivate={(entry) => {
           if (entry.is_dir) {
