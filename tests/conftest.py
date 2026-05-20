@@ -18,3 +18,5 @@ def _has_qt_widgets() -> bool:
 collect_ignore_glob = []
 if not _has_qt_widgets():
     collect_ignore_glob.append("test_local_panel.py")
+    collect_ignore_glob.append("test_main_window_ui.py")
+    collect_ignore_glob.append("test_remote_panel.py")

@@ -11,16 +11,18 @@ from PIL import Image, ImageDraw, ImageFilter
 ROOT = Path(__file__).resolve().parents[1]
 DOCS_ASSETS = ROOT / "docs" / "assets"
 UI_ASSETS = ROOT / "src" / "ui" / "assets"
+FRONTEND_PUBLIC = ROOT / "frontend" / "public"
 
-NAVY = (18, 52, 92, 255)
-BLUE = (52, 134, 217, 255)
-SKY = (111, 191, 242, 255)
-ORANGE = (245, 140, 49, 255)
-ORANGE_LIGHT = (255, 185, 89, 255)
-BG_TOP = (249, 252, 255, 255)
-BG_BOTTOM = (231, 241, 250, 255)
-PANEL_LINE = (68, 124, 178, 82)
-GRID_DOT = (91, 146, 198, 34)
+NAVY = (29, 43, 52, 255)
+BLUE = (23, 107, 143, 255)
+SKY = (105, 167, 200, 255)
+TEAL = (15, 138, 122, 255)
+ORANGE = (216, 145, 47, 255)
+ORANGE_LIGHT = (246, 190, 101, 255)
+BG_TOP = (247, 249, 248, 255)
+BG_BOTTOM = (231, 238, 242, 255)
+PANEL_LINE = (23, 107, 143, 78)
+GRID_DOT = (23, 107, 143, 32)
 WHITE = (255, 255, 255, 255)
 TRANSPARENT = (0, 0, 0, 0)
 
@@ -77,73 +79,73 @@ def _draw_motif(base: Image.Image, size: int, ox: int = 0, oy: int = 0, *, with_
     if with_badge:
         shadow = Image.new("RGBA", base.size, TRANSPARENT)
         shadow_draw = ImageDraw.Draw(shadow)
-        shadow_draw.ellipse(_bbox(0.08, 0.08, 0.84, 0.84, size, ox + int(size * 0.01), oy + int(size * 0.02)), fill=(37, 70, 108, 26))
+        badge_shadow = _bbox(0.08, 0.08, 0.84, 0.84, size, ox + int(size * 0.01), oy + int(size * 0.02))
+        shadow_draw.rounded_rectangle(badge_shadow, radius=max(28, size // 5), fill=(21, 44, 57, 34))
         shadow = shadow.filter(ImageFilter.GaussianBlur(max(2, size // 60)))
         base.alpha_composite(shadow)
 
-        draw.ellipse(_bbox(0.08, 0.08, 0.84, 0.84, size, ox, oy), fill=(243, 249, 254, 255), outline=NAVY, width=max(8, size // 42))
-        draw.ellipse(_bbox(0.16, 0.16, 0.68, 0.68, size, ox, oy), outline=(156, 204, 238, 78), width=max(3, size // 90))
+        badge_box = _bbox(0.08, 0.08, 0.84, 0.84, size, ox, oy)
+        draw.rounded_rectangle(badge_box, radius=max(28, size // 5), fill=(250, 253, 253, 255), outline=NAVY, width=max(8, size // 42))
+        draw.rounded_rectangle(_bbox(0.16, 0.16, 0.68, 0.68, size, ox, oy), radius=max(20, size // 7), outline=(105, 167, 200, 86), width=max(3, size // 90))
+
+    route_line = [
+        _pt(0.25, 0.34, size, ox, oy),
+        _pt(0.39, 0.26, size, ox, oy),
+        _pt(0.58, 0.26, size, ox, oy),
+        _pt(0.75, 0.39, size, ox, oy),
+    ]
+    draw.line(route_line, fill=(105, 167, 200, 160), width=max(9, size // 56), joint="curve")
+    for index, point in enumerate(route_line):
+        radius = max(10, size // 42) if index in (0, len(route_line) - 1) else max(7, size // 58)
+        draw.ellipse((point[0] - radius, point[1] - radius, point[0] + radius, point[1] + radius), fill=TEAL)
+
+    shackle_box = _bbox(0.40, 0.20, 0.22, 0.30, size, ox, oy)
+    draw.arc(shackle_box, start=180, end=360, fill=NAVY, width=max(14, size // 38))
+    draw.arc(_bbox(0.435, 0.235, 0.15, 0.22, size, ox, oy), start=180, end=360, fill=SKY, width=max(5, size // 92))
+    draw.line([_pt(0.40, 0.35, size, ox, oy), _pt(0.40, 0.43, size, ox, oy)], fill=NAVY, width=max(14, size // 38))
+    draw.line([_pt(0.62, 0.35, size, ox, oy), _pt(0.62, 0.43, size, ox, oy)], fill=NAVY, width=max(14, size // 38))
+
+    lock_box = _bbox(0.34, 0.38, 0.34, 0.24, size, ox, oy)
+    draw.rounded_rectangle(lock_box, radius=max(12, size // 30), fill=(255, 255, 255, 255), outline=NAVY, width=max(9, size // 48))
+    draw.rounded_rectangle(_bbox(0.38, 0.42, 0.26, 0.14, size, ox, oy), radius=max(7, size // 48), fill=(239, 246, 248, 255), outline=(105, 167, 200, 120), width=max(3, size // 115))
+
+    hub = _pt(0.51, 0.50, size, ox, oy)
+    for point in [_pt(0.42, 0.45, size, ox, oy), _pt(0.60, 0.45, size, ox, oy), _pt(0.51, 0.57, size, ox, oy)]:
+        draw.line([hub, point], fill=NAVY, width=max(4, size // 108))
+        radius = max(7, size // 54)
+        draw.ellipse((point[0] - radius, point[1] - radius, point[0] + radius, point[1] + radius), fill=TEAL)
+    hub_radius = max(13, size // 36)
+    draw.ellipse((hub[0] - hub_radius, hub[1] - hub_radius, hub[0] + hub_radius, hub[1] + hub_radius), fill=NAVY)
+
+    cabin = _bbox(0.25, 0.54, 0.11, 0.14, size, ox, oy)
+    draw.rounded_rectangle(cabin, radius=max(5, size // 78), fill=BLUE, outline=NAVY, width=max(6, size // 70))
+    draw.rounded_rectangle(_bbox(0.275, 0.57, 0.055, 0.07, size, ox, oy), radius=max(3, size // 96), fill=ORANGE_LIGHT)
 
     hull = [
-        _pt(0.22, 0.59, size, ox, oy),
-        _pt(0.33, 0.59, size, ox, oy),
-        _pt(0.36, 0.69, size, ox, oy),
-        _pt(0.77, 0.69, size, ox, oy),
-        _pt(0.83, 0.63, size, ox, oy),
-        _pt(0.80, 0.79, size, ox, oy),
-        _pt(0.18, 0.79, size, ox, oy),
-        _pt(0.22, 0.67, size, ox, oy),
+        _pt(0.19, 0.66, size, ox, oy),
+        _pt(0.74, 0.66, size, ox, oy),
+        _pt(0.84, 0.58, size, ox, oy),
+        _pt(0.78, 0.78, size, ox, oy),
+        _pt(0.16, 0.78, size, ox, oy),
     ]
     draw.polygon(hull, fill=BLUE, outline=NAVY)
-    draw.line(hull + [hull[0]], fill=NAVY, width=max(6, size // 70), joint="curve")
-
-    draw.rounded_rectangle(_bbox(0.26, 0.48, 0.08, 0.12, size, ox, oy), radius=max(5, size // 80), fill=BLUE, outline=NAVY, width=max(5, size // 88))
-    draw.rounded_rectangle(_bbox(0.275, 0.505, 0.036, 0.07, size, ox, oy), radius=max(3, size // 120), fill=ORANGE_LIGHT)
-
-    stripe = [
-        _pt(0.21, 0.69, size, ox, oy),
-        _pt(0.78, 0.69, size, ox, oy),
-        _pt(0.81, 0.64, size, ox, oy),
-        _pt(0.81, 0.70, size, ox, oy),
-        _pt(0.79, 0.74, size, ox, oy),
-        _pt(0.20, 0.74, size, ox, oy),
-    ]
-    draw.polygon(stripe, fill=ORANGE)
-
-    draw.arc(_bbox(0.42, 0.17, 0.18, 0.26, size, ox, oy), start=180, end=360, fill=NAVY, width=max(10, size // 48))
-    draw.line([_pt(0.42, 0.30, size, ox, oy), _pt(0.42, 0.37, size, ox, oy)], fill=NAVY, width=max(10, size // 48))
-    draw.line([_pt(0.60, 0.30, size, ox, oy), _pt(0.60, 0.37, size, ox, oy)], fill=NAVY, width=max(10, size // 48))
-    draw.arc(_bbox(0.45, 0.20, 0.12, 0.20, size, ox, oy), start=180, end=360, fill=SKY, width=max(5, size // 90))
-
-    lock_box = _bbox(0.36, 0.32, 0.30, 0.30, size, ox, oy)
-    draw.rounded_rectangle(lock_box, radius=max(12, size // 28), fill=(250, 252, 255, 255), outline=NAVY, width=max(8, size // 52))
-    draw.rounded_rectangle(_bbox(0.39, 0.35, 0.24, 0.24, size, ox, oy), radius=max(8, size // 40), outline=(148, 201, 239, 96), width=max(3, size // 115))
-
-    hub = _pt(0.51, 0.47, size, ox, oy)
-    network_points = [
-        _pt(0.43, 0.40, size, ox, oy),
-        _pt(0.60, 0.40, size, ox, oy),
-        _pt(0.41, 0.53, size, ox, oy),
-        _pt(0.62, 0.53, size, ox, oy),
-        _pt(0.51, 0.58, size, ox, oy),
-    ]
-    for point in network_points:
-        draw.line([hub, point], fill=NAVY, width=max(4, size // 110))
-        radius = max(7, size // 55)
-        draw.ellipse((point[0] - radius, point[1] - radius, point[0] + radius, point[1] + radius), fill=BLUE)
-    hub_radius = max(14, size // 34)
-    draw.ellipse((hub[0] - hub_radius, hub[1] - hub_radius, hub[0] + hub_radius, hub[1] + hub_radius), fill=NAVY)
-    draw.rounded_rectangle(
-        (hub[0] - max(5, size // 120), hub[1] + max(12, size // 65), hub[0] + max(5, size // 120), hub[1] + max(64, size // 16)),
-        radius=max(3, size // 120),
-        fill=NAVY,
+    draw.line(hull + [hull[0]], fill=NAVY, width=max(7, size // 64), joint="curve")
+    draw.polygon(
+        [
+            _pt(0.20, 0.67, size, ox, oy),
+            _pt(0.76, 0.67, size, ox, oy),
+            _pt(0.81, 0.62, size, ox, oy),
+            _pt(0.78, 0.72, size, ox, oy),
+            _pt(0.18, 0.72, size, ox, oy),
+        ],
+        fill=TEAL,
     )
 
-    wave_back = _wave_points(0.18, 0.81, 0.80, 0.014, 3.2, 90, size, ox, oy)
-    wave_front = _wave_points(0.19, 0.80, 0.84, 0.013, 3.0, 90, size, ox, oy)
-    draw.line(wave_back, fill=NAVY, width=max(6, size // 82))
+    wave_back = _wave_points(0.17, 0.80, 0.79, 0.012, 2.8, 80, size, ox, oy)
+    wave_front = _wave_points(0.18, 0.78, 0.83, 0.011, 2.6, 80, size, ox, oy)
+    draw.line(wave_back, fill=NAVY, width=max(6, size // 86))
     draw.line(wave_back, fill=SKY, width=max(2, size // 140))
-    draw.line(wave_front, fill=(93, 169, 226, 215), width=max(5, size // 90))
+    draw.line(wave_front, fill=(15, 138, 122, 210), width=max(5, size // 94))
 
 
 def _draw_hero_overlay(base: Image.Image, motif_origin: tuple[int, int], motif_size: int) -> None:
@@ -245,6 +247,7 @@ def build_hero() -> Image.Image:
 def save_assets() -> None:
     DOCS_ASSETS.mkdir(parents=True, exist_ok=True)
     UI_ASSETS.mkdir(parents=True, exist_ok=True)
+    FRONTEND_PUBLIC.mkdir(parents=True, exist_ok=True)
 
     logo = build_logo()
     hero = build_hero()
@@ -254,6 +257,8 @@ def save_assets() -> None:
     hero_path = DOCS_ASSETS / "hero.png"
     app_icon_png_path = UI_ASSETS / "app_icon.png"
     app_icon_ico_path = UI_ASSETS / "app_icon.ico"
+    favicon_png_path = FRONTEND_PUBLIC / "favicon.png"
+    favicon_ico_path = FRONTEND_PUBLIC / "favicon.ico"
 
     logo.save(logo_path)
     hero.save(hero_path)
@@ -263,11 +268,19 @@ def save_assets() -> None:
         format="ICO",
         sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
     )
+    _downsample(app_icon, (256, 256)).save(favicon_png_path)
+    app_icon.save(
+        favicon_ico_path,
+        format="ICO",
+        sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+    )
 
     print(f"Wrote {logo_path}")
     print(f"Wrote {hero_path}")
     print(f"Wrote {app_icon_png_path}")
     print(f"Wrote {app_icon_ico_path}")
+    print(f"Wrote {favicon_png_path}")
+    print(f"Wrote {favicon_ico_path}")
 
 
 if __name__ == "__main__":
