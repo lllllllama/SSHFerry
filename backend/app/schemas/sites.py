@@ -47,3 +47,16 @@ class SiteListResponse(BaseModel):
 
     items: list[SiteResponse]
     total: int
+
+
+class SiteBulkDeleteRequest(BaseModel):
+    """Request body for deleting multiple sites in one storage update."""
+
+    names: list[str] = Field(min_length=1)
+
+
+class SiteBulkDeleteResponse(BaseModel):
+    """Summary returned after deleting multiple sites."""
+
+    deleted: list[str]
+    closed_sessions: int

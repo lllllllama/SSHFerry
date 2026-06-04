@@ -349,6 +349,8 @@ def test_remote_file_service_covers_paths_and_disconnect(monkeypatch):
 
     monkeypatch.setattr(FakeEngine, 'stat', lambda self, path: SimpleNamespace(name='a.txt', path=path, is_dir=False, size=1, mtime=1.0, mode='644'))
     service.delete('session-1', '/remote/a.txt')
+    deleted = service.delete_many('session-1', ['/remote/folder/file.txt', '/remote/a.txt', '/remote/a.txt'])
+    assert deleted == ['/remote/folder/file.txt', '/remote/a.txt']
 
     with pytest.raises(HTTPException, match='Remote path must not be blank'):
         service._require_non_blank_remote_path('   ')

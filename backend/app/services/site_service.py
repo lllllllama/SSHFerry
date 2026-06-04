@@ -63,6 +63,21 @@ class SiteService:
         del sites[idx]
         self._save_sites(sites)
 
+    def delete_sites(self, current_names: list[str]) -> list[str]:
+        names = list(dict.fromkeys(current_names))
+        sites = self._load_sites()
+        missing = [name for name in names if self._find_site_index(sites, name) < 0]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Site '{missing[0]}' not found",
+            )
+
+        name_set = set(names)
+        next_sites = [site for site in sites if not (site.name in name_set and self._is_owned_site(site))]
+        self._save_sites(next_sites)
+        return names
+
     @staticmethod
     def to_response(site: SiteConfig) -> SiteResponse:
         return SiteResponse(

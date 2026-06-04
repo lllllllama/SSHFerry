@@ -66,3 +66,18 @@ class RemoteDeleteRequest(BaseModel):
     session_id: str = Field(min_length=1)
     path: str = Field(min_length=1)
     recursive: bool = True
+
+
+class RemoteBulkDeleteRequest(BaseModel):
+    """Request body for deleting multiple remote paths."""
+
+    session_id: str = Field(min_length=1)
+    paths: list[str] = Field(min_length=1)
+    recursive: bool = True
+
+
+class RemoteBulkDeleteResponse(BaseModel):
+    """Summary returned after deleting multiple remote paths."""
+
+    deleted_paths: list[str]
+    total: int

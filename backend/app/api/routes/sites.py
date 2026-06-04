@@ -4,7 +4,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Response, status
 
 from backend.app.api.deps import get_app_state, require_current_user
-from backend.app.schemas.sites import SiteListResponse, SiteResponse, SiteUpsertRequest
+from backend.app.schemas.sites import (
+    SiteBulkDeleteRequest,
+    SiteBulkDeleteResponse,
+    SiteListResponse,
+    SiteResponse,
+    SiteUpsertRequest,
+)
 from backend.app.services.app_state import AppState
 from backend.app.services.auth_service import AuthContext
 from backend.app.services.site_service import SiteService
@@ -87,3 +93,31 @@ def delete_site(
         message=f'{site_name}; closed {len(expired_sessions)} related session(s).',
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post('/bulk-delete', response_model=SiteBulkDeleteResponse)
+def bulk_delete_sites(
+    payload: SiteBulkDeleteRequest,
+    context: AuthContext = Depends(require_current_user),
+    app_state: AppState = Depends(get_app_state),
+) -> SiteBulkDeleteResponse:
+    service = SiteService(app_state.site_store, context.user.user_id)
+    deleted_names = service.delete_sites(payload.names)
+    deleted_name_set = set(deleted_names)
+    with app_state.session_lock:
+        expired_sessions = [
+            sid
+            for sid, site in app_state.remote_sessions.items()
+            if site.name in deleted_name_set and site.owner_user_id in (None, context.user.user_id)
+        ]
+        for session_id in expired_sessions:
+            app_state.remote_sessions.pop(session_id, None)
+    app_state.activity_service.publish(
+        user_id=context.user.user_id,
+        level='warning',
+        category='site',
+        action='deleted',
+        title='Sites deleted',
+        message=f'{len(deleted_names)} site(s); closed {len(expired_sessions)} related session(s).',
+    )
+    return SiteBulkDeleteResponse(deleted=deleted_names, closed_sessions=len(expired_sessions))

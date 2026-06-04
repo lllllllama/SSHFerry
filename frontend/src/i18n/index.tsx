@@ -177,6 +177,7 @@ const messages: Record<AppLanguage, Record<string, MessageValue>> = {
     'siteSidebar.toast.sessionOpenedMessage': ({ siteName, sessionId }) => `${siteName} / ${sessionId}`,
     'siteSidebar.toast.sessionClosed': 'Remote session closed',
     'siteSidebar.toast.siteDeleted': ({ siteName }) => `Site ${siteName} deleted`,
+    'siteSidebar.toast.sitesDeleted': ({ count }) => `\u5df2\u5220\u9664 ${count} \u4e2a\u7ad9\u70b9`,
     'siteSidebar.confirm.closeSessionTitle': 'Close a session with related tasks',
     'siteSidebar.confirm.closeSessionDescription': ({ sessionId }) =>
       `Session ${sessionId} still has related tasks. Continuing will remove the current pane context.`,
@@ -185,6 +186,10 @@ const messages: Record<AppLanguage, Record<string, MessageValue>> = {
     'siteSidebar.confirm.deleteSiteDescription': ({ siteName, count }) =>
       `This will delete site ${siteName} and close ${count} active sessions that reference it.`,
     'siteSidebar.confirm.deleteSite': 'Delete Site',
+    'siteSidebar.confirm.deleteSitesTitle': ({ count }) => `\u5220\u9664 ${count} \u4e2a\u7ad9\u70b9`,
+    'siteSidebar.confirm.deleteSitesDescription': ({ names, count }) =>
+      `\u5c06\u5220\u9664\u4ee5\u4e0b\u7ad9\u70b9\uff0c\u5e76\u5173\u95ed ${count} \u4e2a\u76f8\u5173\u4f1a\u8bdd\uff1a\n${names}`,
+    'siteSidebar.confirm.deleteSites': '\u5220\u9664\u9009\u4e2d\u7ad9\u70b9',
     'siteSidebar.connectionLine': ({ status, name, message }) => `${status} / ${name} / ${message}`,
     'siteSidebar.loadError': '\u52a0\u8f7d\u7ad9\u70b9\u4fa7\u680f\u5931\u8d25',
     'siteSidebar.secretCheckTitle': '\u8fd0\u884c\u65f6\u51ed\u636e\uff1a\u8fde\u63a5\u68c0\u6d4b',
@@ -484,6 +489,7 @@ const messages: Record<AppLanguage, Record<string, MessageValue>> = {
     'siteSidebar.toast.sessionOpenedMessage': ({ siteName, sessionId }) => `${siteName} / ${sessionId}`,
     'siteSidebar.toast.sessionClosed': 'Remote session closed',
     'siteSidebar.toast.siteDeleted': ({ siteName }) => `Site ${siteName} deleted`,
+    'siteSidebar.toast.sitesDeleted': ({ count }) => `${count} sites deleted`,
     'siteSidebar.confirm.closeSessionTitle': 'Close a session with related tasks',
     'siteSidebar.confirm.closeSessionDescription': ({ sessionId }) =>
       `Session ${sessionId} still has related tasks. Continuing will remove the current pane context.`,
@@ -492,6 +498,10 @@ const messages: Record<AppLanguage, Record<string, MessageValue>> = {
     'siteSidebar.confirm.deleteSiteDescription': ({ siteName, count }) =>
       `This will delete site ${siteName} and close ${count} active sessions that reference it.`,
     'siteSidebar.confirm.deleteSite': 'Delete Site',
+    'siteSidebar.confirm.deleteSitesTitle': ({ count }) => `Delete ${count} sites`,
+    'siteSidebar.confirm.deleteSitesDescription': ({ names, count }) =>
+      `The following sites will be deleted and ${count} related sessions will be closed:\n${names}`,
+    'siteSidebar.confirm.deleteSites': 'Delete Selected Sites',
     'siteSidebar.connectionLine': ({ status, name, message }) => `${status} / ${name} / ${message}`,
     'siteSidebar.loadError': 'Failed to load the site sidebar',
     'siteSidebar.secretCheckTitle': 'Runtime Credentials: Connection Check',

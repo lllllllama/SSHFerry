@@ -50,6 +50,16 @@ from src.ui.widgets.site_editor import SiteEditorDialog
 from src.ui.widgets.feedback import install_button_feedback
 
 
+def _env_int(name: str, default: int, min_value: int) -> int:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        return max(min_value, int(raw))
+    except ValueError:
+        return default
+
+
 class ConnectionCheckThread(QThread):
     check_completed = Signal(list)
 
@@ -104,6 +114,36 @@ class RemoteOpThread(QThread):
         try:
             engine.connect()
             getattr(engine, self.func_name)(*self.args)
+            self.op_done.emit()
+        except SSHFerryError as exc:
+            self.op_failed.emit(f"[{exc.code.name}] {exc.message}")
+        except Exception as exc:
+            self.op_failed.emit(str(exc))
+        finally:
+            try:
+                engine.disconnect()
+            except Exception:
+                pass
+
+
+class RemoteDeleteManyThread(QThread):
+    op_done = Signal()
+    op_failed = Signal(str)
+
+    def __init__(self, site_config: SiteConfig, entries: list[RemoteEntry]):
+        super().__init__()
+        self.site_config = site_config
+        self.entries = entries
+
+    def run(self):
+        engine = SftpEngine(self.site_config)
+        try:
+            engine.connect()
+            for entry in sorted(self.entries, key=lambda item: item.path.count("/"), reverse=True):
+                if entry.is_dir:
+                    engine.remove_dir_recursive(entry.path)
+                else:
+                    engine.remove_file(entry.path)
             self.op_done.emit()
         except SSHFerryError as exc:
             self.op_failed.emit(f"[{exc.code.name}] {exc.message}")
@@ -245,6 +285,7 @@ class MainWindow(QMainWindow):
         self._pending_list_requests: dict[tuple[str, str, str], dict] = {}
         self._latest_list_response_ids: dict[tuple[str, str] | tuple[str, str, str], int] = {}
         self._session_list_activity: dict[str, int] = {}
+        self._max_remote_list_concurrency = _env_int("SSHFERRY_REMOTE_LIST_MAX_CONCURRENT", 3, 1)
         self._topbar_snapshot: tuple[int, int, int] | None = None
 
         self.setWindowTitle(f"SSHFerry #{self._window_number}")
@@ -734,6 +775,7 @@ class MainWindow(QMainWindow):
         )
         panel.request_mkdir.connect(lambda name, item, sid=session_id: self._activate_and_run(sid, self._remote_mkdir, name, item))
         panel.request_delete.connect(lambda entry, sid=session_id: self._activate_and_run(sid, self._remote_delete, entry))
+        panel.request_delete_entries.connect(lambda entries, sid=session_id: self._activate_and_run(sid, self._remote_delete_entries, entries))
         panel.request_rename.connect(
             lambda entry, new_name, sid=session_id: self._activate_and_run(sid, self._remote_rename, entry, new_name)
         )
@@ -890,11 +932,46 @@ class MainWindow(QMainWindow):
         else:
             self._session_list_activity[session_id] = active
 
-    def _finalize_list_request(self, request_key: tuple[str, str, str]) -> None:
+    def _queue_list_request(
+        self,
+        request_key: tuple[str, str, str],
+        session_id: str,
+        path: str,
+        parent_item: Optional[QTreeWidgetItem],
+        retry_on_failure: bool,
+        suppress_error_dialog: bool,
+    ) -> None:
+        self._pending_list_requests[request_key] = {
+            "session_id": session_id,
+            "path": path,
+            "parent_item": parent_item if parent_item and isValid(parent_item) else None,
+            "retry_on_failure": retry_on_failure,
+            "suppress_error_dialog": suppress_error_dialog,
+        }
+
+    def _session_inflight_list_count(self, session_id: str) -> int:
+        return sum(1 for key in self._inflight_list_requests if key[0] == session_id)
+
+    def _session_list_concurrency_limit(self) -> int:
+        return max(1, getattr(self, "_max_remote_list_concurrency", 3))
+
+    def _drain_session_list_queue(self, session_id: str) -> None:
+        while self._session_inflight_list_count(session_id) < self._session_list_concurrency_limit():
+            for request_key, pending in list(self._pending_list_requests.items()):
+                if request_key[0] != session_id:
+                    continue
+                if request_key in self._inflight_list_requests:
+                    continue
+                self._pending_list_requests.pop(request_key, None)
+                self._list_remote_dir(**pending)
+                break
+            else:
+                return
+
+    def _finalize_list_request(self, request_key: tuple[str, str, str], drain_pending: bool = True) -> None:
         self._inflight_list_requests.pop(request_key, None)
-        pending = self._pending_list_requests.pop(request_key, None)
-        if pending:
-            self._list_remote_dir(**pending)
+        if drain_pending:
+            self._drain_session_list_queue(request_key[0])
 
     def _list_remote_dir(
         self,
@@ -909,23 +986,54 @@ class MainWindow(QMainWindow):
             return
         request_key = self._list_request_key(session_id, path, parent_item)
         response_scope_key = self._list_response_scope_key(session_id, path, parent_item)
-        if request_key in self._inflight_list_requests:
-            self._pending_list_requests[request_key] = {
-                "session_id": session_id,
-                "path": path,
-                "parent_item": parent_item if parent_item and isValid(parent_item) else None,
-                "retry_on_failure": retry_on_failure,
-                "suppress_error_dialog": suppress_error_dialog,
-            }
+        if (
+            request_key in self._inflight_list_requests
+            or self._session_inflight_list_count(session_id) >= self._session_list_concurrency_limit()
+        ):
+            self._queue_list_request(
+                request_key,
+                session_id,
+                path,
+                parent_item,
+                retry_on_failure,
+                suppress_error_dialog,
+            )
             return
         self._list_request_counter += 1
         request_id = self._list_request_counter
         self._inflight_list_requests[request_key] = request_id
         self._latest_list_response_ids[response_scope_key] = request_id
         self._begin_session_list_activity(session_id)
+        self._start_list_request(
+            session_id,
+            path,
+            parent_item,
+            retry_on_failure,
+            suppress_error_dialog,
+            request_id,
+            request_key,
+            response_scope_key,
+            session.site.name,
+        )
+
+    def _start_list_request(
+        self,
+        session_id: str,
+        path: str,
+        parent_item: Optional[QTreeWidgetItem],
+        retry_on_failure: bool,
+        suppress_error_dialog: bool,
+        request_id: int,
+        request_key: tuple[str, str, str],
+        response_scope_key: tuple[str, str] | tuple[str, str, str],
+        site_name: str,
+    ) -> None:
+        session = self.sessions.get(session_id)
+        if not session:
+            return
         thread = ListDirThread(session.site, path, parent_item)
         thread.list_completed.connect(
-            lambda remote_path, entries, item, sid=session_id, rid=request_id, rkey=request_key, scope_key=response_scope_key, site_name=session.site.name: self._on_list_completed(
+            lambda remote_path, entries, item, sid=session_id, rid=request_id, rkey=request_key, scope_key=response_scope_key, site_name=site_name: self._on_list_completed(
                 sid,
                 remote_path,
                 entries,
@@ -937,7 +1045,7 @@ class MainWindow(QMainWindow):
             )
         )
         thread.list_failed.connect(
-            lambda remote_path, msg, sid=session_id, item=parent_item, retry=retry_on_failure, silent=suppress_error_dialog, rid=request_id, rkey=request_key, scope_key=response_scope_key, site_name=session.site.name: self._on_list_failed(
+            lambda remote_path, msg, sid=session_id, item=parent_item, retry=retry_on_failure, silent=suppress_error_dialog, rid=request_id, rkey=request_key, scope_key=response_scope_key, site_name=site_name: self._on_list_failed(
                 sid, remote_path, msg, item, retry, silent, rid, rkey, scope_key, site_name
             )
         )
@@ -956,25 +1064,28 @@ class MainWindow(QMainWindow):
     ):
         session = self.sessions.get(session_id)
         self._end_session_list_activity(session_id)
-        self._finalize_list_request(request_key)
-        if not session:
-            return
-        if session.site.name != site_name:
-            return
-        if self._latest_list_response_ids.get(response_scope_key) != request_id:
-            return
-        if parent_item:
-            target_item = parent_item if isValid(parent_item) else session.panel.find_item_by_path(path)
-            if not target_item:
-                self._log(f"[{session.site.name}] Ignored stale list result for {path}")
+        self._finalize_list_request(request_key, drain_pending=False)
+        try:
+            if not session:
                 return
-            session.panel.populate_node(target_item, entries, preserve_state=True)
-        else:
-            preserve_state = path == session.panel.current_path
-            session.panel.set_path(path)
-            session.panel.set_root_entries(entries, preserve_state=preserve_state)
-        session.connected = True
-        session.status_label.setText(f"Connected: {session.site.name}")
+            if session.site.name != site_name:
+                return
+            if self._latest_list_response_ids.get(response_scope_key) != request_id:
+                return
+            if parent_item:
+                target_item = parent_item if isValid(parent_item) else session.panel.find_item_by_path(path)
+                if not target_item:
+                    self._log(f"[{session.site.name}] Ignored stale list result for {path}")
+                    return
+                session.panel.populate_node(target_item, entries, preserve_state=True)
+            else:
+                preserve_state = path == session.panel.current_path
+                session.panel.set_path(path)
+                session.panel.set_root_entries(entries, preserve_state=preserve_state)
+            session.connected = True
+            session.status_label.setText(f"Connected: {session.site.name}")
+        finally:
+            self._drain_session_list_queue(session_id)
 
     def _on_list_failed(
         self,
@@ -991,13 +1102,17 @@ class MainWindow(QMainWindow):
     ):
         session = self.sessions.get(session_id)
         self._end_session_list_activity(session_id)
-        if request_key is not None:
-            self._finalize_list_request(request_key)
         if session and site_name and session.site.name != site_name:
+            if request_key is not None:
+                self._finalize_list_request(request_key)
             return
         if response_scope_key is not None and self._latest_list_response_ids.get(response_scope_key) != request_id:
+            if request_key is not None:
+                self._finalize_list_request(request_key)
             return
         if retry_on_failure and session and self._ensure_site_credentials(session.site):
+            if request_key is not None:
+                self._finalize_list_request(request_key, drain_pending=False)
             self._log(f"Refreshing {session.site.name} after disconnect on {path}")
             self._list_remote_dir(
                 session_id,
@@ -1007,6 +1122,8 @@ class MainWindow(QMainWindow):
                 suppress_error_dialog=suppress_error_dialog,
             )
             return
+        if request_key is not None:
+            self._finalize_list_request(request_key)
         if session:
             session.connected = False
             session.status_label.setText("Disconnected")
@@ -1087,15 +1204,37 @@ class MainWindow(QMainWindow):
         self._start_thread(thread)
 
     def _remote_delete(self, session_id: str, entry: RemoteEntry):
+        self._remote_delete_entries(session_id, [entry])
+
+    def _remote_delete_entries(self, session_id: str, entries: list[RemoteEntry]):
         session = self.sessions.get(session_id)
-        if not session:
+        entries = self._prune_nested_remote_entries(entries)
+        if not session or not entries:
             return
-        cmd = "remove_dir_recursive" if entry.is_dir else "remove_file"
-        parent_path = get_remote_parent(entry.path) or session.panel.current_path
-        thread = RemoteOpThread(session.site, cmd, entry.path)
+        parent_path = get_remote_parent(entries[0].path) if len(entries) == 1 else session.panel.current_path
+        parent_path = parent_path or session.panel.current_path
+        thread = RemoteDeleteManyThread(session.site, entries)
         thread.op_done.connect(lambda sid=session_id, path=parent_path: self._refresh_remote_path_context(sid, path))
         thread.op_failed.connect(lambda msg: self._op_error("delete", msg))
         self._start_thread(thread)
+
+    @staticmethod
+    def _prune_nested_remote_entries(entries: list[RemoteEntry]) -> list[RemoteEntry]:
+        unique: dict[str, RemoteEntry] = {}
+        for entry in entries:
+            normalized = normalize_remote_path(entry.path)
+            unique.setdefault(normalized, entry)
+        roots: list[RemoteEntry] = []
+        root_paths: list[str] = []
+        for path, entry in sorted(unique.items(), key=lambda item: (item[0].count("/"), item[0])):
+            if any(
+                root_path == "/" or path == root_path or path.startswith(f"{root_path}/")
+                for root_path in root_paths
+            ):
+                continue
+            roots.append(entry)
+            root_paths.append(path.rstrip("/") or "/")
+        return roots
 
     def _remote_rename(self, session_id: str, entry: RemoteEntry, new_name: str):
         session = self.sessions.get(session_id)

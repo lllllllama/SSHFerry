@@ -625,6 +625,8 @@ export function LocalPanel({ onQueueDownloads }: LocalPanelProps) {
         }
         highlightQuery={isLocalSearchActive ? localSearchQuery : undefined}
         onSelect={(path, multi) => toggleLocalSelection(path, multi)}
+        onSelectRange={setLocalSelection}
+        onDeleteSelection={isDirectLocalMode ? undefined : handleDelete}
         onActivate={(entry) => {
           if (entry.is_dir) {
             setLocalPath(entry.path);

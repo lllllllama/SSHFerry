@@ -1,5 +1,6 @@
 ﻿import { useState } from 'react';
 
+import { useRef } from 'react';
 import type { TransferDragPayload } from '../../api/types';
 import { getTransferDragMime } from '../../api/ws';
 import { useI18n } from '../../i18n';
@@ -22,7 +23,9 @@ interface FileTableProps<T extends FileLike> {
   errorMessage?: string | null;
   stale?: boolean;
   onSelect: (path: string, multi: boolean) => void;
+  onSelectRange?: (paths: string[]) => void;
   onActivate: (entry: T) => void;
+  onDeleteSelection?: () => void;
   getEntrySubtitle?: (entry: T) => string | null;
   highlightQuery?: string;
   dragPayloadFactory?: (entry: T) => TransferDragPayload | null;
@@ -109,14 +112,34 @@ export function FileTable<T extends FileLike>(props: FileTableProps<T>) {
     errorMessage,
     stale,
     onSelect,
+    onSelectRange,
     onActivate,
+    onDeleteSelection,
     getEntrySubtitle,
     highlightQuery,
     dragPayloadFactory,
     onDropTransfer,
   } = props;
+  const shellRef = useRef<HTMLDivElement | null>(null);
   const [hoveredPath, setHoveredPath] = useState<string | null>(null);
+  const [selectionAnchorPath, setSelectionAnchorPath] = useState<string | null>(null);
   const { formatDateTime, t } = useI18n();
+
+  function handleRowClick(entry: T, event: React.MouseEvent<HTMLTableRowElement>) {
+    shellRef.current?.focus();
+    if (event.shiftKey && selectionAnchorPath && onSelectRange) {
+      const anchorIndex = entries.findIndex((item) => item.path === selectionAnchorPath);
+      const targetIndex = entries.findIndex((item) => item.path === entry.path);
+      if (anchorIndex >= 0 && targetIndex >= 0) {
+        const [start, end] = [anchorIndex, targetIndex].sort((left, right) => left - right);
+        onSelectRange(entries.slice(start, end + 1).map((item) => item.path));
+        return;
+      }
+    }
+
+    setSelectionAnchorPath(entry.path);
+    onSelect(entry.path, event.ctrlKey || event.metaKey);
+  }
 
   function handleDrop(event: React.DragEvent<HTMLElement>, targetPath: string) {
     if (!onDropTransfer) {
@@ -147,7 +170,15 @@ export function FileTable<T extends FileLike>(props: FileTableProps<T>) {
 
   return (
     <div
+      ref={shellRef}
       className={`file-table-shell ${hoveredPath === '__background__' ? 'is-drop-target' : ''}`}
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.key === 'Delete' && selectedPaths.length && onDeleteSelection) {
+          event.preventDefault();
+          onDeleteSelection();
+        }
+      }}
       onDragOver={(event) => {
         if (!onDropTransfer) {
           return;
@@ -197,7 +228,7 @@ export function FileTable<T extends FileLike>(props: FileTableProps<T>) {
                   .filter(Boolean)
                   .join(' ')}
                 draggable={Boolean(dragPayloadFactory)}
-                onClick={(event) => onSelect(entry.path, event.ctrlKey || event.metaKey)}
+                onClick={(event) => handleRowClick(entry, event)}
                 onDoubleClick={() => onActivate(entry)}
                 onDragStart={(event) => {
                   if (!dragPayloadFactory) {

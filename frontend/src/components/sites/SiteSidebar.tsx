@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState, type MouseEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { getErrorMessage } from '../../api/http';
 import { checkConnection, closeSession, listSessions, openSession } from '../../api/sessions';
-import { deleteSite, listSites } from '../../api/sites';
+import { deleteSites, listSites } from '../../api/sites';
 import type { ConnectionCheckResult, SiteResponse } from '../../api/types';
 import { useI18n } from '../../i18n';
 import { useTasksStore } from '../../store/tasks';
@@ -32,6 +32,7 @@ export function SiteSidebar() {
   const openConfirm = useUiStore((state) => state.openConfirm);
   const pushToast = useUiStore((state) => state.pushToast);
   const tasks = useTasksStore((state) => state.items);
+  const [selectedSiteNames, setSelectedSiteNames] = useState<string[]>([]);
   const [secretRequest, setSecretRequest] = useState<SecretRequestState | null>(null);
   const [connectionResult, setConnectionResult] = useState<ConnectionCheckResult[]>([]);
   const { formatProtocol, t } = useI18n();
@@ -46,16 +47,37 @@ export function SiteSidebar() {
     queryFn: listSessions,
   });
 
-  const deleteSiteMutation = useMutation({ mutationFn: deleteSite });
+  const deleteSitesMutation = useMutation({ mutationFn: deleteSites });
   const checkConnectionMutation = useMutation({ mutationFn: checkConnection });
   const openSessionMutation = useMutation({ mutationFn: openSession });
   const closeSessionMutation = useMutation({ mutationFn: closeSession });
 
-  const selectedSite = sitesQuery.data?.items.find((site) => site.name === selectedSiteName) ?? null;
+  const siteItems = sitesQuery.data?.items ?? [];
+  const selectedSiteSet = new Set(selectedSiteNames);
+  const selectedSite = siteItems.find((site) => site.name === selectedSiteName) ?? null;
+  const selectedSites = siteItems.filter((site) => selectedSiteSet.has(site.name));
+  const hasMultiSiteSelection = selectedSites.length > 1;
   const activeSessionId = activePaneId || sessionsQuery.data?.items[0]?.session_id || null;
   const selectedSiteEndpoint = selectedSite ? `${selectedSite.username}@${selectedSite.host}:${selectedSite.port}` : '';
   const selectedSiteAuthSummary = selectedSite ? getAuthSummary(selectedSite) : '';
   const connectionResultTone: 'success' | 'warning' = connectionResult.every((item) => item.passed) ? 'success' : 'warning';
+
+  useEffect(() => {
+    if (!sitesQuery.data?.items) {
+      return;
+    }
+    const availableNames = new Set(sitesQuery.data.items.map((site) => site.name));
+    if (selectedSiteName && !availableNames.has(selectedSiteName)) {
+      setSelectedSiteName(null);
+    }
+    setSelectedSiteNames((current) => {
+      const next = current.filter((siteName) => availableNames.has(siteName));
+      if (selectedSiteName && availableNames.has(selectedSiteName) && !next.includes(selectedSiteName)) {
+        return [selectedSiteName];
+      }
+      return next.length === current.length ? current : next;
+    });
+  }, [selectedSiteName, setSelectedSiteName, sitesQuery.data?.items]);
 
   function needsRuntimeSecret(site: SiteResponse) {
     return site.auth_method === 'password' && !site.has_password;
@@ -124,25 +146,70 @@ export function SiteSidebar() {
     });
   }
 
-  function requestDeleteSite(site: SiteResponse) {
-    const affectedPanes = panes.filter((pane) => pane.siteName === site.name).map((pane) => pane.sessionId);
+  function selectSite(siteName: string, event: MouseEvent<HTMLButtonElement>) {
+    const siteNames = siteItems.map((site) => site.name);
+    let nextSelection: string[];
+    let nextActiveSiteName: string | null = siteName;
+
+    if (event.shiftKey && selectedSiteName) {
+      const anchorIndex = siteNames.indexOf(selectedSiteName);
+      const targetIndex = siteNames.indexOf(siteName);
+      if (anchorIndex >= 0 && targetIndex >= 0) {
+        const [start, end] = [anchorIndex, targetIndex].sort((a, b) => a - b);
+        nextSelection = siteNames.slice(start, end + 1);
+      } else {
+        nextSelection = [siteName];
+      }
+    } else if (event.ctrlKey || event.metaKey) {
+      if (selectedSiteNames.includes(siteName)) {
+        nextSelection = selectedSiteNames.filter((value) => value !== siteName);
+        nextActiveSiteName = selectedSiteName === siteName ? nextSelection.at(-1) ?? null : selectedSiteName;
+      } else {
+        nextSelection = [...selectedSiteNames, siteName];
+      }
+    } else {
+      nextSelection = [siteName];
+    }
+
+    setSelectedSiteNames(nextSelection);
+    setSelectedSiteName(nextActiveSiteName);
+  }
+
+  function requestDeleteSites(sites: SiteResponse[]) {
+    const siteNames = sites.map((site) => site.name);
+    const siteNameSet = new Set(siteNames);
+    const affectedPanes = panes.filter((pane) => siteNameSet.has(pane.siteName)).map((pane) => pane.sessionId);
+    const isBulkDelete = sites.length > 1;
     openConfirm({
-      title: t('siteSidebar.confirm.deleteSiteTitle', { siteName: site.name }),
-      description: t('siteSidebar.confirm.deleteSiteDescription', {
-        siteName: site.name,
-        count: affectedPanes.length,
-      }),
-      confirmLabel: t('siteSidebar.confirm.deleteSite'),
+      title: isBulkDelete
+        ? t('siteSidebar.confirm.deleteSitesTitle', { count: sites.length })
+        : t('siteSidebar.confirm.deleteSiteTitle', { siteName: siteNames[0] }),
+      description: isBulkDelete
+        ? t('siteSidebar.confirm.deleteSitesDescription', {
+            count: affectedPanes.length,
+            names: siteNames.join('\n'),
+          })
+        : t('siteSidebar.confirm.deleteSiteDescription', {
+            siteName: siteNames[0],
+            count: affectedPanes.length,
+          }),
+      confirmLabel: isBulkDelete ? t('siteSidebar.confirm.deleteSites') : t('siteSidebar.confirm.deleteSite'),
       destructive: true,
       onConfirm: async () => {
-        await deleteSiteMutation.mutateAsync(site.name);
+        const result = await deleteSitesMutation.mutateAsync(siteNames);
         affectedPanes.forEach((sessionId) => closePane(sessionId));
-        if (selectedSiteName === site.name) {
+        if (selectedSiteName && siteNameSet.has(selectedSiteName)) {
           setSelectedSiteName(null);
         }
+        setSelectedSiteNames((current) => current.filter((siteName) => !siteNameSet.has(siteName)));
         await queryClient.invalidateQueries({ queryKey: ['sites'] });
         await queryClient.invalidateQueries({ queryKey: ['sessions'] });
-        pushToast({ tone: 'success', title: t('siteSidebar.toast.siteDeleted', { siteName: site.name }) });
+        pushToast({
+          tone: 'success',
+          title: isBulkDelete
+            ? t('siteSidebar.toast.sitesDeleted', { count: result.deleted.length })
+            : t('siteSidebar.toast.siteDeleted', { siteName: siteNames[0] }),
+        });
       },
     });
   }
@@ -176,7 +243,7 @@ export function SiteSidebar() {
           <button
             type="button"
             className="ghost-button site-action-button"
-            disabled={!selectedSite}
+            disabled={!selectedSite || hasMultiSiteSelection}
             onClick={() => openSiteEditor(selectedSite)}
           >
             {t('common.edit')}
@@ -184,10 +251,10 @@ export function SiteSidebar() {
           <button
             type="button"
             className="ghost-button site-action-button"
-            disabled={!selectedSite}
+            disabled={!selectedSites.length}
             onClick={() => {
-              if (selectedSite) {
-                requestDeleteSite(selectedSite);
+              if (selectedSites.length) {
+                requestDeleteSites(selectedSites);
               }
             }}
           >
@@ -196,7 +263,7 @@ export function SiteSidebar() {
           <button
             type="button"
             className="ghost-button site-action-button"
-            disabled={!selectedSite}
+            disabled={!selectedSite || hasMultiSiteSelection}
             onClick={() => {
               if (!selectedSite) {
                 return;
@@ -213,7 +280,7 @@ export function SiteSidebar() {
           <button
             type="button"
             className="ghost-button site-action-button site-action-span-2"
-            disabled={!selectedSite}
+            disabled={!selectedSite || hasMultiSiteSelection}
             onClick={() => {
               if (!selectedSite) {
                 return;
@@ -259,14 +326,16 @@ export function SiteSidebar() {
           <StatusBadge tone="neutral">{sitesQuery.data?.total?.toString() || '0'}</StatusBadge>
         </div>
         <div className="sidebar-list">
-          {sitesQuery.data?.items.map((site) => {
+          {siteItems.map((site) => {
             const endpoint = `${site.username}@${site.host}:${site.port}`;
+            const isSelected = selectedSiteSet.has(site.name);
             return (
               <button
                 type="button"
                 key={site.name}
-                className={`sidebar-row ${selectedSiteName === site.name ? 'is-active' : ''}`}
-                onClick={() => setSelectedSiteName(site.name)}
+                className={`sidebar-row ${isSelected ? 'is-active' : ''} ${selectedSiteName === site.name ? 'is-current' : ''}`}
+                aria-pressed={isSelected}
+                onClick={(event) => selectSite(site.name, event)}
               >
                 <span className="sidebar-row-copy">
                   <span className="sidebar-row-title" title={site.name}>{site.name}</span>

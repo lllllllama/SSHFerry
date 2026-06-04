@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ApiError, getErrorMessage } from '../../api/http';
-import { createRemoteDirectory, deleteRemotePath, listRemoteFiles, renameRemotePath } from '../../api/remoteFiles';
+import { createRemoteDirectory, deleteRemotePaths, listRemoteFiles, renameRemotePath } from '../../api/remoteFiles';
 import type { RemoteEntry } from '../../api/types';
 import { useI18n } from '../../i18n';
 import { useUiStore } from '../../store/ui';
@@ -43,6 +43,7 @@ export function RemotePane({
   const setPanePath = useWorkspaceStore((state) => state.setPanePath);
   const setPanePathDraft = useWorkspaceStore((state) => state.setPanePathDraft);
   const setPaneStale = useWorkspaceStore((state) => state.setPaneStale);
+  const setRemoteSelection = useWorkspaceStore((state) => state.setRemoteSelection);
   const toggleRemoteSelection = useWorkspaceStore((state) => state.toggleRemoteSelection);
   const openConfirm = useUiStore((state) => state.openConfirm);
   const pushToast = useUiStore((state) => state.pushToast);
@@ -63,7 +64,7 @@ export function RemotePane({
     mutationFn: ({ oldPath, newPath }: { oldPath: string; newPath: string }) =>
       renameRemotePath(pane.sessionId, oldPath, newPath),
   });
-  const deleteMutation = useMutation({ mutationFn: (path: string) => deleteRemotePath(pane.sessionId, path, true) });
+  const deleteMutation = useMutation({ mutationFn: (paths: string[]) => deleteRemotePaths(pane.sessionId, paths, true) });
 
   const selectedEntries = listingQuery.data?.items.filter((entry) => remoteSelection.includes(entry.path)) ?? [];
   const firstSelectedEntry = selectedEntries[0] ?? null;
@@ -102,7 +103,8 @@ export function RemotePane({
       confirmLabel: t('remotePane.deleteConfirm'),
       destructive: true,
       onConfirm: async () => {
-        await Promise.all(selectedEntries.map((entry) => deleteMutation.mutateAsync(entry.path)));
+        await deleteMutation.mutateAsync(selectedEntries.map((entry) => entry.path));
+        setRemoteSelection(pane.sessionId, []);
         pushToast({ tone: 'success', title: t('remotePane.deleteToast') });
         await refreshListing();
       },
@@ -250,6 +252,8 @@ export function RemotePane({
         errorMessage={listingQuery.error ? getErrorMessage(listingQuery.error, t('remotePane.loadError')) : null}
         stale={pane.stale}
         onSelect={(path, multi) => toggleRemoteSelection(pane.sessionId, path, multi)}
+        onSelectRange={(paths) => setRemoteSelection(pane.sessionId, paths)}
+        onDeleteSelection={handleDelete}
         onActivate={(entry: RemoteEntry) => {
           if (entry.is_dir) {
             setPanePath(pane.sessionId, entry.path);

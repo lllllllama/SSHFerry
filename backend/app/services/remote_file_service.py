@@ -69,14 +69,20 @@ class RemoteFileService:
         engine = self._build_engine(site)
         try:
             engine.connect()
-            entry = engine.stat(target_path)
-            if entry.is_dir:
-                if recursive:
-                    engine.remove_dir_recursive(target_path)
-                else:
-                    engine.remove_dir(target_path)
-            else:
-                engine.remove_file(target_path)
+            self._delete_path(engine, target_path, recursive)
+        finally:
+            self._disconnect_quietly(engine)
+
+    def delete_many(self, session_id: str, paths: list[str], recursive: bool = True) -> list[str]:
+        site = self._require_session(session_id)
+        target_paths = list(dict.fromkeys(self._require_non_blank_remote_path(path) for path in paths))
+        target_paths.sort(key=lambda path: path.count('/'), reverse=True)
+        engine = self._build_engine(site)
+        try:
+            engine.connect()
+            for target_path in target_paths:
+                self._delete_path(engine, target_path, recursive)
+            return target_paths
         finally:
             self._disconnect_quietly(engine)
 
@@ -127,6 +133,17 @@ class RemoteFileService:
             engine.disconnect()
         except Exception:
             pass
+
+    @staticmethod
+    def _delete_path(engine, target_path: str, recursive: bool) -> None:
+        entry = engine.stat(target_path)
+        if entry.is_dir:
+            if recursive:
+                engine.remove_dir_recursive(target_path)
+            else:
+                engine.remove_dir(target_path)
+        else:
+            engine.remove_file(target_path)
 
     @staticmethod
     def _build_engine(site: SiteConfig):

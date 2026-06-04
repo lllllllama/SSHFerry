@@ -100,6 +100,11 @@ export interface SiteResponse {
   has_key_passphrase: boolean;
 }
 
+export interface SiteBulkDeleteResponse {
+  deleted: string[];
+  closed_sessions: number;
+}
+
 export interface ConnectionCheckRequest {
   site_name: string;
   password?: string | null;
@@ -232,6 +237,11 @@ export interface RemoteListResponse {
   current_path: string;
   parent_path: string | null;
   items: RemoteEntry[];
+  total: number;
+}
+
+export interface RemoteBulkDeleteResponse {
+  deleted_paths: string[];
   total: number;
 }
 

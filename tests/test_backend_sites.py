@@ -234,3 +234,56 @@ def test_delete_site_removes_persisted_config():
         assert listed.json() == {'items': [], 'total': 0}
 
     _run_in_temp_store('delete', runner)
+
+
+def test_bulk_delete_sites_removes_selected_configs_only():
+    def payload(name: str) -> dict[str, object]:
+        return {
+            'name': name,
+            'host': f'{name}.example.com',
+            'port': 22,
+            'username': 'alice',
+            'auth_method': 'password',
+            'remote_root': '/work',
+            'default_transfer_protocol': 'sftp',
+        }
+
+    def runner(store_path: Path):
+        with _build_test_client(store_path) as client:
+            for name in ['alpha', 'beta', 'gamma']:
+                create_response = client.post('/api/sites', json=payload(name))
+                assert create_response.status_code == 201
+
+            delete_response = client.post('/api/sites/bulk-delete', json={'names': ['alpha', 'gamma']})
+            listed = client.get('/api/sites')
+
+        assert delete_response.status_code == 200
+        assert delete_response.json() == {'deleted': ['alpha', 'gamma'], 'closed_sessions': 0}
+        assert [item['name'] for item in listed.json()['items']] == ['beta']
+
+    _run_in_temp_store('bulk_delete', runner)
+
+
+def test_bulk_delete_sites_is_all_or_nothing_when_name_is_missing():
+    def payload(name: str) -> dict[str, object]:
+        return {
+            'name': name,
+            'host': f'{name}.example.com',
+            'port': 22,
+            'username': 'alice',
+            'auth_method': 'password',
+            'remote_root': '/work',
+            'default_transfer_protocol': 'sftp',
+        }
+
+    def runner(store_path: Path):
+        with _build_test_client(store_path) as client:
+            create_response = client.post('/api/sites', json=payload('alpha'))
+            delete_response = client.post('/api/sites/bulk-delete', json={'names': ['alpha', 'missing']})
+            listed = client.get('/api/sites')
+
+        assert create_response.status_code == 201
+        assert delete_response.status_code == 404
+        assert [item['name'] for item in listed.json()['items']] == ['alpha']
+
+    _run_in_temp_store('bulk_delete_missing', runner)

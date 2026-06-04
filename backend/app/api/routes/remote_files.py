@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends, Query, Response, status
 
 from backend.app.api.deps import get_app_state, require_current_user
 from backend.app.schemas.remote_files import (
+    RemoteBulkDeleteRequest,
+    RemoteBulkDeleteResponse,
     RemoteDeleteRequest,
     RemoteListResponse,
     RemoteMkdirRequest,
@@ -103,3 +105,22 @@ def delete_remote_path(
         message=f'{payload.session_id}:{payload.path}',
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post('/bulk-delete', response_model=RemoteBulkDeleteResponse)
+def bulk_delete_remote_paths(
+    payload: RemoteBulkDeleteRequest,
+    context: AuthContext = Depends(require_current_user),
+    app_state: AppState = Depends(get_app_state),
+) -> RemoteBulkDeleteResponse:
+    service = RemoteFileService(app_state.remote_sessions, context.user.user_id, app_state.session_lock)
+    deleted_paths = service.delete_many(payload.session_id, payload.paths, recursive=payload.recursive)
+    app_state.activity_service.publish(
+        user_id=context.user.user_id,
+        level='warning',
+        category='remote',
+        action='delete',
+        title='Remote paths deleted',
+        message=f'{payload.session_id}:{len(deleted_paths)} path(s)',
+    )
+    return RemoteBulkDeleteResponse(deleted_paths=deleted_paths, total=len(deleted_paths))

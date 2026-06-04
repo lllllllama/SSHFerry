@@ -1,4 +1,4 @@
-import type { RemoteListResponse } from './types';
+import type { RemoteBulkDeleteResponse, RemoteListResponse } from './types';
 import { http } from './http';
 
 export async function listRemoteFiles(sessionId: string, path?: string): Promise<RemoteListResponse> {
@@ -32,4 +32,13 @@ export async function deleteRemotePath(sessionId: string, path: string, recursiv
     path,
     recursive,
   });
+}
+
+export async function deleteRemotePaths(sessionId: string, paths: string[], recursive = true): Promise<RemoteBulkDeleteResponse> {
+  const { data } = await http.post<RemoteBulkDeleteResponse>('/api/remote-files/bulk-delete', {
+    session_id: sessionId,
+    paths,
+    recursive,
+  });
+  return data;
 }

@@ -149,6 +149,52 @@ def test_remote_mkdir_rename_and_delete_routes(monkeypatch, remote_site):
     _run_in_temp_store('mutations', runner)
 
 
+def test_remote_bulk_delete_route_deletes_files_and_folders_in_one_engine(monkeypatch, remote_site):
+    calls: list[tuple[str, str | None]] = []
+
+    class FakeEngine:
+        def connect(self):
+            calls.append(('connect', None))
+
+        def disconnect(self):
+            calls.append(('disconnect', None))
+
+        def stat(self, path):
+            calls.append(('stat', path))
+            return SimpleNamespace(
+                name=path.rsplit('/', 1)[-1],
+                path=path,
+                is_dir=path.endswith('/docs'),
+                size=0,
+                mtime=0.0,
+                mode=None,
+            )
+
+        def remove_dir_recursive(self, path):
+            calls.append(('remove_dir_recursive', path))
+
+        def remove_file(self, path):
+            calls.append(('remove_file', path))
+
+    monkeypatch.setattr(RemoteFileService, '_build_engine', staticmethod(lambda _site: FakeEngine()))
+
+    def runner(store_path: Path):
+        with _build_test_client(store_path, remote_site) as client:
+            response = client.post(
+                '/api/remote-files/bulk-delete',
+                json={'session_id': 'session-1', 'paths': ['/remote/a.txt', '/remote/docs'], 'recursive': True},
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {'deleted_paths': ['/remote/a.txt', '/remote/docs'], 'total': 2}
+        assert calls.count(('connect', None)) == 1
+        assert calls.count(('disconnect', None)) == 1
+        assert ('remove_file', '/remote/a.txt') in calls
+        assert ('remove_dir_recursive', '/remote/docs') in calls
+
+    _run_in_temp_store('bulk-delete', runner)
+
+
 def test_remote_files_require_valid_session(remote_site):
     def runner(store_path: Path):
         with _build_test_client(store_path, remote_site) as client:

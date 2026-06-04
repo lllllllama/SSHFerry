@@ -4,7 +4,7 @@ import os
 from dataclasses import dataclass, field
 
 from PySide6.QtCore import QByteArray, QMimeData, QSize, Qt, Signal, QTimer
-from PySide6.QtGui import QColor, QDrag, QPainter, QPixmap
+from PySide6.QtGui import QColor, QDrag, QKeyEvent, QPainter, QPixmap
 from shiboken6 import isValid
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -72,6 +72,15 @@ class DraggableTreeWidget(QTreeWidget):
         self.setDragEnabled(True)
         self.setDragDropMode(QAbstractItemView.DragOnly)
 
+    def keyPressEvent(self, event: QKeyEvent):
+        if event.key() == Qt.Key_Delete:
+            panel = self.parent()
+            delete_selected = getattr(panel, "_request_delete_selected_entries", None)
+            if callable(delete_selected) and delete_selected():
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
     def startDrag(self, supportedActions):
         """Start a drag operation with remote paths."""
         selected_items = self.selectedItems()
@@ -138,6 +147,7 @@ class RemotePanel(QWidget):
     request_refresh_node = Signal(str, object)  # path, node item
     request_mkdir = Signal(str, object)  # new dir name, parent item
     request_delete = Signal(RemoteEntry)
+    request_delete_entries = Signal(list)
     request_rename = Signal(RemoteEntry, str)  # entry, new_name
     request_upload = Signal()  # upload selected local files to current remote dir
     request_upload_paths = Signal(list, object)  # upload specific local paths (from drag-drop), target item
@@ -600,36 +610,56 @@ class RemotePanel(QWidget):
 
         menu.addSeparator()
 
-        selected = self.get_selected_entries()
-        
-        # Determine context parent
-        target_item = self.tree.itemAt(pos)
+        selected = self._prepare_context_selection(target_item)
         
         act_upload = menu.addAction("Upload here...")
         act_upload.triggered.connect(lambda: self.request_upload.emit())
 
-        if len(selected) == 1:
+        if selected:
             entry = selected[0]
-            if not entry.is_dir:
-                act_dl = menu.addAction("Download")
-                act_dl.triggered.connect(lambda: self.request_download.emit(entry))
-            else:
-                act_dl = menu.addAction("Download folder")
-                act_dl.triggered.connect(lambda: self.request_download.emit(entry))
+            if len(selected) == 1:
+                if not entry.is_dir:
+                    act_dl = menu.addAction("Download")
+                    act_dl.triggered.connect(lambda: self.request_download.emit(entry))
+                else:
+                    act_dl = menu.addAction("Download folder")
+                    act_dl.triggered.connect(lambda: self.request_download.emit(entry))
 
-            menu.addSeparator()
+                menu.addSeparator()
 
-            act_rename = menu.addAction("Rename")
-            act_rename.triggered.connect(lambda: self._prompt_rename(entry))
+                act_rename = menu.addAction("Rename")
+                act_rename.triggered.connect(lambda: self._prompt_rename(entry))
 
-            act_delete = menu.addAction("Delete")
-            act_delete.triggered.connect(lambda: self.request_delete.emit(entry))
+            delete_label = self._delete_action_label(selected)
+            act_delete = menu.addAction(delete_label)
+            act_delete.triggered.connect(lambda checked=False, entries=list(selected): self._emit_delete_entries(entries, checked))
 
         menu.addSeparator()
         act_mkdir = menu.addAction("New Folder")
         act_mkdir.triggered.connect(lambda: self._prompt_mkdir(target_item))
 
         menu.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def _prepare_context_selection(self, target_item: QTreeWidgetItem | None) -> list[RemoteEntry]:
+        if target_item and not target_item.isSelected():
+            self.tree.clearSelection()
+            target_item.setSelected(True)
+            self.tree.setCurrentItem(target_item)
+        return self.get_selected_entries()
+
+    @staticmethod
+    def _delete_action_label(entries: list[RemoteEntry]) -> str:
+        return "Delete" if len(entries) == 1 else f"Delete {len(entries)} items"
+
+    def _request_delete_selected_entries(self) -> bool:
+        selected = self.get_selected_entries()
+        if not selected:
+            return False
+        self._emit_delete_entries(selected)
+        return True
+
+    def _emit_delete_entries(self, entries: list[RemoteEntry], _checked: bool = False) -> None:
+        self.request_delete_entries.emit(entries)
 
     def _prompt_mkdir(self, parent_item: QTreeWidgetItem = None):
         name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")

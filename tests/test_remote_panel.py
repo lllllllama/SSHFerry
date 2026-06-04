@@ -69,3 +69,57 @@ def test_remote_panel_drag_animation_uses_pulse_highlight():
 
     assert panel._drag_pulse_timer.isActive() is False
     assert panel.tree.styleSheet() == panel._base_tree_stylesheet
+
+
+def test_remote_panel_context_selection_preserves_multi_select_for_delete():
+    _app()
+    panel = RemotePanel()
+    entries = [
+        _entry("a.txt", "/remote/a.txt", size=1),
+        _entry("b.txt", "/remote/b.txt", size=2),
+    ]
+
+    panel.set_root_entries(entries)
+    _spin_until(lambda: panel.tree.topLevelItemCount() == 2)
+    first = panel.tree.topLevelItem(0)
+    second = panel.tree.topLevelItem(1)
+    first.setSelected(True)
+    second.setSelected(True)
+
+    selected = panel._prepare_context_selection(first)
+
+    assert [entry.path for entry in selected] == ["/remote/a.txt", "/remote/b.txt"]
+    assert panel._delete_action_label(selected) == "Delete 2 items"
+
+
+def test_remote_panel_delete_selected_entries_emits_all_selected_paths():
+    _app()
+    panel = RemotePanel()
+    entries = [
+        _entry("a.txt", "/remote/a.txt", size=1),
+        _entry("b.txt", "/remote/b.txt", size=2),
+    ]
+    emitted: list[list[str]] = []
+    panel.request_delete_entries.connect(lambda selected: emitted.append([entry.path for entry in selected]))
+
+    panel.set_root_entries(entries)
+    _spin_until(lambda: panel.tree.topLevelItemCount() == 2)
+    panel.tree.topLevelItem(0).setSelected(True)
+    panel.tree.topLevelItem(1).setSelected(True)
+
+    handled = panel._request_delete_selected_entries()
+
+    assert handled is True
+    assert emitted == [["/remote/a.txt", "/remote/b.txt"]]
+
+
+def test_remote_panel_delete_action_ignores_qaction_checked_argument():
+    _app()
+    panel = RemotePanel()
+    entry = _entry("a.txt", "/remote/a.txt", size=1)
+    emitted: list[list[str]] = []
+    panel.request_delete_entries.connect(lambda selected: emitted.append([item.path for item in selected]))
+
+    panel._emit_delete_entries([entry], True)
+
+    assert emitted == [["/remote/a.txt"]]

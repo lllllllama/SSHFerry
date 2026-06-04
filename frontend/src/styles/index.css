@@ -716,6 +716,11 @@ button:disabled,
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
+.sidebar-row.is-active.is-current {
+  border-color: rgba(23, 107, 143, 0.75);
+  box-shadow: inset 3px 0 0 var(--accent), 0 0 0 1px rgba(23, 107, 143, 0.12);
+}
+
 .sidebar-row:hover,
 .compact-session:hover {
   background: var(--bg-subtle);
