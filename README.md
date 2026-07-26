@@ -18,6 +18,8 @@
   <p>
     <a href="#highlights">Highlights</a> |
     <a href="#quick-start">Quick Start</a> |
+    <a href="#transfer-strategies">Transfer Strategies</a> |
+    <a href="#performance-tuning">Performance Tuning</a> |
     <a href="#development-and-testing">Development and Testing</a> |
     <a href="#documentation">Documentation</a>
   </p>
@@ -33,9 +35,9 @@
 
 - **Desktop first**: a Python + PySide6 client is the recommended entry point today.
 - **Multi-session transfers**: move files local-to-remote, remote-to-local, and remote-to-remote.
-- **Inspectable tasks**: track progress, speed, and status; pause, resume, cancel, and retry work.
-- **Flexible transfer paths**: use `sftp`, `scp`, parallel SFTP, and large-file remote-copy strategies.
-- **Safer remote scope**: constrain remote operations with `remote_root` to reduce accidental changes.
+- **A transfer core built for speed**: fully pipelined SFTP reads (`readv` batch prefetch), a 16MB channel window, SSH connections reused across files, parallel chunking for large files, and small files bundled into a single tar transfer — far ahead of request-per-round-trip SFTP clients on high-latency links.
+- **Inspectable tasks**: track progress, speed, and status; pause, resume, cancel, retry, and resume interrupted transfers from where they stopped.
+- **Safer remote scope**: constrain remote operations with `remote_root` to reduce accidental changes; destructive actions such as recursive deletes ask for confirmation.
 - **Web layer in progress**: the FastAPI backend and React + Vite frontend reuse the same transfer core.
 
 ## Architecture
@@ -43,8 +45,8 @@
 ```mermaid
 flowchart LR
     A[PySide6 Desktop] --> B[Shared Transfer Core<br/>TaskScheduler + Engines]
-    B --> C[Local FastAPI Backend]
-    C --> D[React + Vite Frontend]
+    C[Local FastAPI Backend] --> B
+    D[React + Vite Frontend] --> C
 ```
 
 ```text
@@ -54,6 +56,20 @@ frontend/   React + Vite frontend application
 tests/      Pytest suite
 tools/      Packaging and benchmark scripts
 ```
+
+## Transfer Strategies
+
+The scheduler picks a transfer path automatically based on what is being moved:
+
+| Scenario | Automatic strategy |
+| --- | --- |
+| Regular file | Single-connection SFTP with `readv`-pipelined reads and pipelined writes |
+| Large file (default ≥ 50MB) | Parallel SFTP: concurrent chunk transfer over multiple connections |
+| Folder with many small files | Bundle into a tar locally → one transfer → unpack remotely (requires remote `tar`; falls back to per-file automatically) |
+| Remote ↔ remote | Relayed streaming copy; very large files race a "direct + relay" dual-path pipeline |
+| Interrupted transfer / retry | Resumes from completed bytes; files that already exist with matching size are skipped |
+
+Thresholds and details for each strategy are described in the [transfer rules notes](docs/backend/TRANSFER_RULES_zh.md).
 
 ## Quick Start
 
@@ -107,6 +123,8 @@ cd frontend
 npm run dev
 ```
 
+Default addresses: backend at `http://127.0.0.1:18080`, frontend dev server at `http://127.0.0.1:5173`. On first use of the web UI, create a local account on the login page.
+
 Common backend environment variables:
 
 - `SSHFERRY_BACKEND_HOST`: default `127.0.0.1`
@@ -114,9 +132,28 @@ Common backend environment variables:
 - `SSHFERRY_ALLOWED_ORIGINS`
 - `SSHFERRY_LOCAL_TOKEN`
 
+## Performance Tuning
+
+The defaults suit most setups; these environment variables are the most useful performance knobs:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `SSHFERRY_SFTP_WINDOW_BYTES` | `16MB` | SSH channel receive window. Single-connection throughput on a high-latency link tops out around window ÷ RTT — raise this first when bandwidth is left on the table |
+| `SSHFERRY_PARALLEL_THRESHOLD_BYTES` | `50MB` | Files larger than this use parallel chunked transfer |
+| `SSHFERRY_PARALLEL_PRESET` | upload `medium` / download `high` | Parallelism tier: `low` (4 connections) / `medium` (10) / `high` (16); override per direction with `SSHFERRY_PARALLEL_UPLOAD_PRESET` / `..._DOWNLOAD_PRESET` |
+| `SSHFERRY_FOLDER_ARCHIVE_ENABLED` | `1` | Toggle for tar-bundled small-file transfers |
+| `SSHFERRY_SCP_BUFF_BYTES` | `1MB` | SCP engine transfer buffer |
+| `SSHFERRY_STRICT_HOSTKEY` | off | When set, reject unknown host keys (new hosts are recorded automatically by default) |
+
+The full list (chunk sizes, retry counts, dual-path thresholds, and more) lives in the [transfer rules notes](docs/backend/TRANSFER_RULES_zh.md). The bundled benchmark script compares configurations:
+
+```bash
+python tools/benchmark_transfer.py --site my-server --size-mb 512 --modes sftp,parallel:high
+```
+
 ## Development and Testing
 
-Run tests:
+Run the tests (includes the backend coverage gate; everything should pass):
 
 ```bash
 pytest
@@ -155,6 +192,7 @@ release/SSHFerry-<version>-windows.sha256
 - [Docs Index](docs/README.md)
 - [中文文档索引](docs/README_zh.md)
 - [Backend Overview](docs/backend/BACKEND_OVERVIEW.md)
+- [Transfer Rules Notes](docs/backend/TRANSFER_RULES_zh.md)
 - [Frontend Build Guide](docs/frontend/FRONTEND_BUILD.md)
 - [Frontend API Guide](docs/frontend/FRONTEND_API.md)
 - [Frontend Design Guide](docs/frontend/FRONTEND_DESIGN.md)
