@@ -250,18 +250,18 @@ def save_assets() -> None:
     FRONTEND_PUBLIC.mkdir(parents=True, exist_ok=True)
 
     logo = build_logo()
-    hero = build_hero()
     app_icon = build_app_icon()
 
     logo_path = DOCS_ASSETS / "logo.png"
-    hero_path = DOCS_ASSETS / "hero.png"
     app_icon_png_path = UI_ASSETS / "app_icon.png"
     app_icon_ico_path = UI_ASSETS / "app_icon.ico"
     favicon_png_path = FRONTEND_PUBLIC / "favicon.png"
     favicon_ico_path = FRONTEND_PUBLIC / "favicon.ico"
 
     logo.save(logo_path)
-    hero.save(hero_path)
+    # docs/assets/hero.png is a real UI screenshot produced by
+    # tools/generate_hero_screenshot.py; it is intentionally not
+    # regenerated here.
     app_icon.save(app_icon_png_path)
     app_icon.save(
         app_icon_ico_path,
@@ -276,7 +276,6 @@ def save_assets() -> None:
     )
 
     print(f"Wrote {logo_path}")
-    print(f"Wrote {hero_path}")
     print(f"Wrote {app_icon_png_path}")
     print(f"Wrote {app_icon_ico_path}")
     print(f"Wrote {favicon_png_path}")

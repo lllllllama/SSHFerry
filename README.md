@@ -69,7 +69,7 @@ The scheduler picks a transfer path automatically based on what is being moved:
 | Remote ↔ remote | Relayed streaming copy; very large files race a "direct + relay" dual-path pipeline |
 | Interrupted transfer / retry | Resumes from completed bytes; files that already exist with matching size are skipped |
 
-Thresholds and details for each strategy are described in the [transfer rules notes](docs/backend/TRANSFER_RULES_zh.md).
+Thresholds and details for each strategy are described in the [transfer rules notes](docs/backend/TRANSFER_RULES_zh.md) (Chinese).
 
 ## Quick Start
 
@@ -145,7 +145,7 @@ The defaults suit most setups; these environment variables are the most useful p
 | `SSHFERRY_SCP_BUFF_BYTES` | `1MB` | SCP engine transfer buffer |
 | `SSHFERRY_STRICT_HOSTKEY` | off | When set, reject unknown host keys (new hosts are recorded automatically by default) |
 
-The full list (chunk sizes, retry counts, dual-path thresholds, and more) lives in the [transfer rules notes](docs/backend/TRANSFER_RULES_zh.md). The bundled benchmark script compares configurations:
+The full list (chunk sizes, retry counts, dual-path thresholds, and more) lives in the [transfer rules notes](docs/backend/TRANSFER_RULES_zh.md) (Chinese). The bundled benchmark script compares configurations:
 
 ```bash
 python tools/benchmark_transfer.py --site my-server --size-mb 512 --modes sftp,parallel:high
@@ -192,7 +192,7 @@ release/SSHFerry-<version>-windows.sha256
 - [Docs Index](docs/README.md)
 - [中文文档索引](docs/README_zh.md)
 - [Backend Overview](docs/backend/BACKEND_OVERVIEW.md)
-- [Transfer Rules Notes](docs/backend/TRANSFER_RULES_zh.md)
+- [Transfer Rules Notes (Chinese)](docs/backend/TRANSFER_RULES_zh.md)
 - [Frontend Build Guide](docs/frontend/FRONTEND_BUILD.md)
 - [Frontend API Guide](docs/frontend/FRONTEND_API.md)
 - [Frontend Design Guide](docs/frontend/FRONTEND_DESIGN.md)
