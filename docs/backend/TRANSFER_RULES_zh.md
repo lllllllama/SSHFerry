@@ -481,6 +481,8 @@ resume 时的策略是：
 - `SSHFERRY_REMOTE_DUALPATH_MAX_DUP_CHUNKS`
 - `SSHFERRY_REMOTE_RELAY_DOWNLOAD_PRESET`
 - `SSHFERRY_REMOTE_RELAY_UPLOAD_PRESET`
+- `SSHFERRY_SFTP_WINDOW_BYTES`（SFTP 通道接收窗口，默认 16MB；高延迟链路的单连接吞吐上限约为 窗口/RTT）
+- `SSHFERRY_SCP_BUFF_BYTES`（SCP 传输缓冲区，默认 1MB）
 
 如果后面要和你另一个合作者继续对齐，这些变量就是“规则开关”和“性能旋钮”的主入口。
 
