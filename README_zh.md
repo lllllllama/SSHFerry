@@ -37,6 +37,8 @@
 - **多会话传输**：支持本地到远端、远端到本地、远端到远端复制。
 - **为速度而生的传输核心**：SFTP 读取全程流水线化（`readv` 批量预取）、16MB 通道窗口、跨文件复用 SSH 连接、大文件并行分块、小文件自动打包成 tar 一次传输——高延迟链路上的表现远超逐请求往返的普通 SFTP 客户端。
 - **任务可观察**：查看进度、速度、状态，并支持暂停、继续、取消、重试和断点续传。
+- **主机密钥校验（TOFU）**：首次连接记录服务器密钥指纹，之后密钥变更会被拒绝并告警，防范中间人攻击；兼容系统 `~/.ssh/known_hosts`。
+- **灵活的认证方式**：密码、密钥文件、ssh-agent、默认 `~/.ssh` 密钥，以及通过跳板机（ProxyJump）连接内网主机。
 - **远端边界保护**：通过 `remote_root` 收窄远端文件操作范围，降低误操作风险；递归删除等危险操作需要确认。
 - **Web 层持续集成**：FastAPI 后端和 React + Vite 前端复用同一套传输核心。
 
@@ -143,7 +145,7 @@ npm run dev
 | `SSHFERRY_PARALLEL_PRESET` | 上传 `medium` / 下载 `high` | 并行档位：`low`(4 连接) / `medium`(10) / `high`(16)，可用 `SSHFERRY_PARALLEL_UPLOAD_PRESET` / `..._DOWNLOAD_PRESET` 分方向覆盖 |
 | `SSHFERRY_FOLDER_ARCHIVE_ENABLED` | `1` | 小文件 tar 打包传输开关 |
 | `SSHFERRY_SCP_BUFF_BYTES` | `1MB` | SCP 引擎传输缓冲区 |
-| `SSHFERRY_STRICT_HOSTKEY` | 关闭 | 开启后拒绝未知主机密钥（默认自动记录新主机） |
+| `SSHFERRY_STRICT_HOSTKEY` | 关闭 | 开启后拒绝不在 known_hosts 中的主机（默认首次连接自动记录，仅当密钥*变更*时才拒绝） |
 
 完整清单（分块大小、重试次数、双路通道阈值等）见[传输规则说明](docs/backend/TRANSFER_RULES_zh.md)。也可以用自带的基准脚本对比不同配置：
 

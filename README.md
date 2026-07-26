@@ -37,6 +37,8 @@
 - **Multi-session transfers**: move files local-to-remote, remote-to-local, and remote-to-remote.
 - **A transfer core built for speed**: fully pipelined SFTP reads (`readv` batch prefetch), a 16MB channel window, SSH connections reused across files, parallel chunking for large files, and small files bundled into a single tar transfer — far ahead of request-per-round-trip SFTP clients on high-latency links.
 - **Inspectable tasks**: track progress, speed, and status; pause, resume, cancel, retry, and resume interrupted transfers from where they stopped.
+- **Host key verification (TOFU)**: the server's key fingerprint is recorded on first connect and any later change is rejected with a warning, guarding against man-in-the-middle attacks; interoperates with the system `~/.ssh/known_hosts`.
+- **Flexible authentication**: password, key file, ssh-agent, default `~/.ssh` keys, and reaching internal hosts through a jump host (ProxyJump).
 - **Safer remote scope**: constrain remote operations with `remote_root` to reduce accidental changes; destructive actions such as recursive deletes ask for confirmation.
 - **Web layer in progress**: the FastAPI backend and React + Vite frontend reuse the same transfer core.
 
@@ -143,7 +145,7 @@ The defaults suit most setups; these environment variables are the most useful p
 | `SSHFERRY_PARALLEL_PRESET` | upload `medium` / download `high` | Parallelism tier: `low` (4 connections) / `medium` (10) / `high` (16); override per direction with `SSHFERRY_PARALLEL_UPLOAD_PRESET` / `..._DOWNLOAD_PRESET` |
 | `SSHFERRY_FOLDER_ARCHIVE_ENABLED` | `1` | Toggle for tar-bundled small-file transfers |
 | `SSHFERRY_SCP_BUFF_BYTES` | `1MB` | SCP engine transfer buffer |
-| `SSHFERRY_STRICT_HOSTKEY` | off | When set, reject unknown host keys (new hosts are recorded automatically by default) |
+| `SSHFERRY_STRICT_HOSTKEY` | off | When set, reject hosts not already in known_hosts (by default new hosts are recorded on first use and only *changed* keys are rejected) |
 
 The full list (chunk sizes, retry counts, dual-path thresholds, and more) lives in the [transfer rules notes](docs/backend/TRANSFER_RULES_zh.md) (Chinese). The bundled benchmark script compares configurations:
 

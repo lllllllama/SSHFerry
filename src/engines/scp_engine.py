@@ -19,6 +19,7 @@ from src.shared.errors import (
     NetworkError,
     SSHFerryError,
 )
+from src.shared.host_keys import fingerprint, install_policy
 from src.shared.models import SiteConfig
 from src.shared.paths import ensure_in_sandbox, normalize_remote_path, to_local_fs_path
 
@@ -37,22 +38,14 @@ class ScpEngine:
         """Establish SSH and SCP connections."""
         try:
             self.ssh_client = paramiko.SSHClient()
-            strict_hostkey = os.getenv("SSHFERRY_STRICT_HOSTKEY", "").strip().lower() in (
-                "1",
-                "true",
-                "yes",
-                "on",
-            )
-            if strict_hostkey:
-                self.ssh_client.load_system_host_keys()
-                self.ssh_client.set_missing_host_key_policy(paramiko.RejectPolicy())
-            else:
-                self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            install_policy(self.ssh_client)
             connect_kwargs = {
                 "hostname": self.site_config.host,
                 "port": self.site_config.port,
                 "username": self.site_config.username,
                 "timeout": 10,
+                "allow_agent": True,
+                "look_for_keys": True,
             }
 
             if self.site_config.auth_method == "password":
@@ -82,9 +75,22 @@ class ScpEngine:
                 self.scp_client = SCPClient(self.ssh_client.get_transport())
             self._connected = True
             self.logger.info(f"SCP connected to {self.site_config.host}:{self.site_config.port}")
+        except paramiko.BadHostKeyException as e:
+            raise SSHFerryError(
+                ErrorCode.HOSTKEY_CHANGED,
+                f"Host key verification failed for {self.site_config.host}:{self.site_config.port}. "
+                f"The server key changed and may indicate a man-in-the-middle attack. "
+                f"Expected {fingerprint(e.expected_key)}, got {fingerprint(e.key)}.",
+            )
         except paramiko.AuthenticationException as e:
             raise AuthenticationError(f"Authentication failed: {e}")
         except paramiko.SSHException as e:
+            if "not found in known_hosts" in str(e):
+                raise SSHFerryError(
+                    ErrorCode.HOSTKEY_UNKNOWN,
+                    f"Host {self.site_config.host}:{self.site_config.port} is not in known_hosts "
+                    f"and strict host key checking is enabled.",
+                )
             raise NetworkError(ErrorCode.REMOTE_DISCONNECT, f"SSH error: {e}")
         except Exception as e:
             raise SSHFerryError(ErrorCode.UNKNOWN_ERROR, f"SCP connection failed: {e}")

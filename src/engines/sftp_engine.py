@@ -20,6 +20,7 @@ from src.shared.errors import (
     SSHFerryError,
 )
 from src.shared.errors import PermissionError as SFPermissionError
+from src.shared.host_keys import fingerprint, install_policy
 from src.shared.models import RemoteEntry, SiteConfig
 from src.shared.paths import ensure_in_sandbox, normalize_remote_path, to_local_fs_path
 
@@ -36,6 +37,37 @@ def _sftp_window_bytes() -> int:
     except ValueError:
         return DEFAULT_SFTP_WINDOW_BYTES
     return max(64 * 1024, value)
+
+
+def known_hosts_hint() -> str:
+    """Best-effort path string for the managed known_hosts file (for messages)."""
+    try:
+        from src.shared.host_keys import known_hosts_path
+
+        return str(known_hosts_path())
+    except Exception:
+        return "the SSHFerry known_hosts file"
+
+
+def _parse_proxy_jump(spec: str, *, default_user: str) -> tuple[str, str, int]:
+    """Parse a ProxyJump spec ``[user@]host[:port]`` into (user, host, port)."""
+    user = default_user
+    host_part = spec
+    if "@" in host_part:
+        user, host_part = host_part.split("@", 1)
+    port = 22
+    # Bracketed IPv6 form: [::1]:2222
+    if host_part.startswith("[") and "]" in host_part:
+        host, _, tail = host_part[1:].partition("]")
+        if tail.startswith(":") and tail[1:]:
+            port = int(tail[1:])
+    elif host_part.count(":") == 1:
+        host, _, port_text = host_part.partition(":")
+        if port_text:
+            port = int(port_text)
+    else:
+        host = host_part
+    return user or default_user, host, port
 
 
 class SftpEngine:
@@ -58,6 +90,7 @@ class SftpEngine:
         self.logger = logger or logging.getLogger(__name__)
         self.ssh_client: Optional[SSHClient] = None
         self.sftp_client: Optional[SFTPClient] = None
+        self._proxy_client: Optional[SSHClient] = None
         self._connected = False
         self._ever_connected = False
 
@@ -70,12 +103,6 @@ class SftpEngine:
             NetworkError: If connection fails
             SSHFerryError: For other connection issues
         """
-        strict_hostkey = os.getenv("SSHFERRY_STRICT_HOSTKEY", "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        )
         connect_kwargs = {
             "hostname": self.site_config.host,
             "port": self.site_config.port,
@@ -83,6 +110,10 @@ class SftpEngine:
             "timeout": 10,
             "banner_timeout": 20,
             "auth_timeout": 20,
+            # Fall back to ssh-agent and default ~/.ssh keys when no explicit
+            # key file is configured, matching what OpenSSH users expect.
+            "allow_agent": True,
+            "look_for_keys": True,
         }
         connect_kwargs["timeout"] = max(
             1,
@@ -113,11 +144,13 @@ class SftpEngine:
             self.disconnect()
             try:
                 self.ssh_client = paramiko.SSHClient()
-                if strict_hostkey:
-                    self.ssh_client.load_system_host_keys()
-                    self.ssh_client.set_missing_host_key_policy(paramiko.RejectPolicy())
+                install_policy(self.ssh_client)
+
+                proxy_sock = self._open_proxy_channel()
+                if proxy_sock is not None:
+                    connect_kwargs["sock"] = proxy_sock
                 else:
-                    self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                    connect_kwargs.pop("sock", None)
 
                 self.ssh_client.connect(**connect_kwargs)
                 self.sftp_client = self._open_sftp_client()
@@ -127,13 +160,34 @@ class SftpEngine:
                     f"Connected to {self.site_config.host}:{self.site_config.port}"
                 )
                 return
+            except paramiko.BadHostKeyException as e:
+                # The server's key changed since it was first trusted — treat
+                # this as a hard security failure, never retry.
+                self.disconnect()
+                raise SSHFerryError(
+                    ErrorCode.HOSTKEY_CHANGED,
+                    f"Host key verification failed for {self.site_config.host}:{self.site_config.port}. "
+                    f"The server key changed and may indicate a man-in-the-middle attack. "
+                    f"Expected {fingerprint(e.expected_key)}, got {fingerprint(e.key)}. "
+                    f"If this change is expected, remove the host from {known_hosts_hint()}.",
+                )
             except paramiko.AuthenticationException as e:
                 self.disconnect()
                 raise AuthenticationError(f"Authentication failed: {e}")
             except (paramiko.SSHException, socket.timeout, TimeoutError, OSError) as e:
                 self.disconnect()
-                last_error = e
                 error_text = str(e)
+                if "not found in known_hosts" in error_text:
+                    # Strict mode and the host was never trusted; retrying is
+                    # pointless and the cause is a trust decision, not a network
+                    # blip.
+                    raise SSHFerryError(
+                        ErrorCode.HOSTKEY_UNKNOWN,
+                        f"Host {self.site_config.host}:{self.site_config.port} is not in known_hosts "
+                        f"and strict host key checking is enabled. Connect once with strict mode off "
+                        f"to record its key, or add it to {known_hosts_hint()}.",
+                    )
+                last_error = e
                 is_banner_error = "Error reading SSH protocol banner" in error_text
                 if attempt < attempts:
                     current_delay = retry_delay_seconds * (2 if is_banner_error else 1)
@@ -158,6 +212,45 @@ class SftpEngine:
         if last_error is not None:
             raise NetworkError(ErrorCode.REMOTE_DISCONNECT, f"SSH error: {last_error}")
 
+    def _open_proxy_channel(self):
+        """Open a direct-tcpip channel through a ProxyJump host, if configured.
+
+        Returns a paramiko Channel usable as the ``sock`` for the target
+        connection, or ``None`` when no jump host is set. The jump host reuses
+        the site's key/agent credentials (the common single-key setup).
+        """
+        proxy_spec = (self.site_config.proxy_jump or "").strip()
+        if not proxy_spec:
+            return None
+
+        proxy_user, proxy_host, proxy_port = _parse_proxy_jump(
+            proxy_spec, default_user=self.site_config.username
+        )
+        proxy_kwargs = {
+            "hostname": proxy_host,
+            "port": proxy_port,
+            "username": proxy_user,
+            "timeout": 10,
+            "allow_agent": True,
+            "look_for_keys": True,
+        }
+        if self.site_config.key_path:
+            proxy_kwargs["key_filename"] = self.site_config.key_path
+        if self.site_config.key_passphrase:
+            proxy_kwargs["passphrase"] = self.site_config.key_passphrase
+
+        self._proxy_client = paramiko.SSHClient()
+        install_policy(self._proxy_client)
+        self._proxy_client.connect(**proxy_kwargs)
+        transport = self._proxy_client.get_transport()
+        if transport is None:
+            raise SSHFerryError(ErrorCode.REMOTE_DISCONNECT, "Jump host transport unavailable")
+        return transport.open_channel(
+            "direct-tcpip",
+            (self.site_config.host, self.site_config.port),
+            ("", 0),
+        )
+
     def _open_sftp_client(self) -> SFTPClient:
         """Open the SFTP channel with an enlarged receive window when possible."""
         try:
@@ -180,6 +273,9 @@ class SftpEngine:
         if self.ssh_client:
             self.ssh_client.close()
             self.ssh_client = None
+        if self._proxy_client:
+            self._proxy_client.close()
+            self._proxy_client = None
         self._connected = False
         if had_connection and self._ever_connected:
             self.logger.info("Disconnected from server")
