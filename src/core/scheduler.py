@@ -12,7 +12,7 @@ import uuid
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from queue import Empty, Queue
 from threading import Lock, Thread
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from src.core.task_state import assert_transition
 from src.engines.parallel_sftp_engine import DEFAULT_PARALLEL_THRESHOLD_BYTES, ParallelSftpEngine
@@ -1200,6 +1200,10 @@ class TaskScheduler:
     def _scan_local_folder_tree(self, local_dir: str, remote_dir: str) -> list[tuple[str, str, bool, int]]:
         items: list[tuple[str, str, bool, int]] = []
         for root, dir_names, file_names in os.walk(local_dir):
+            # os.walk order is filesystem-dependent; sort for deterministic
+            # traversal, bundling, and progress ordering across platforms.
+            dir_names.sort()
+            file_names.sort()
             rel_root = os.path.relpath(root, local_dir)
             current_remote = remote_dir if rel_root == "." else f"{remote_dir.rstrip('/')}/{rel_root.replace(os.sep, '/')}"
             for dir_name in dir_names:
@@ -1613,41 +1617,94 @@ class TaskScheduler:
                 task.current_file = label
 
         def worker() -> None:
-            while not stop_state["triggered"]:
+            # One persistent connection per worker instead of one SSH
+            # handshake per file.
+            worker_engine: Optional[SftpEngine] = None
+
+            def get_engine() -> SftpEngine:
+                nonlocal worker_engine
+                if worker_engine is None:
+                    engine = SftpEngine(site, self.logger)
+                    engine.connect()
+                    worker_engine = engine
+                elif hasattr(worker_engine, "is_connected") and not worker_engine.is_connected():
+                    worker_engine.connect()
+                return worker_engine
+
+            def reset_engine() -> None:
+                nonlocal worker_engine
+                if worker_engine is None:
+                    return
                 try:
-                    src_path, dst_path, file_size = queue.get(timeout=0.1)
-                except Empty:
-                    if queue.empty():
-                        break
-                    continue
-                file_key = src_path
-                try:
-                    if check_interrupt():
+                    worker_engine.disconnect()
+                except Exception:
+                    pass
+                worker_engine = None
+
+            try:
+                while not stop_state["triggered"]:
+                    try:
+                        src_path, dst_path, file_size = queue.get(timeout=0.1)
+                    except Empty:
+                        if queue.empty():
+                            break
+                        continue
+                    file_key = src_path
+                    try:
+                        if check_interrupt():
+                            stop_state["triggered"] = True
+                            return
+                        attempts = 0
+                        while True:
+                            attempts += 1
+                            try:
+                                if direction == "upload":
+                                    self._transfer_folder_upload_file(
+                                        task,
+                                        site,
+                                        src_path,
+                                        dst_path,
+                                        file_size,
+                                        file_key,
+                                        add_progress,
+                                        mark_complete,
+                                        acquire_parallel_slot,
+                                        release_parallel_slot,
+                                        probe_engine=probe_engine,
+                                        engine_provider=get_engine,
+                                    )
+                                else:
+                                    self._transfer_folder_download_file(
+                                        task,
+                                        site,
+                                        src_path,
+                                        dst_path,
+                                        file_size,
+                                        file_key,
+                                        add_progress,
+                                        mark_complete,
+                                        acquire_parallel_slot,
+                                        release_parallel_slot,
+                                        engine_provider=get_engine,
+                                    )
+                                break
+                            except InterruptedError:
+                                raise
+                            except SSHFerryError:
+                                # The persistent connection may have dropped;
+                                # retry once on a fresh one.
+                                reset_engine()
+                                if attempts >= 2:
+                                    raise
+                    except Exception as exc:
+                        if not first_error:
+                            first_error.append(exc)
                         stop_state["triggered"] = True
                         return
-                    if direction == "upload":
-                        self._transfer_folder_upload_file(
-                            task,
-                            site,
-                            src_path,
-                            dst_path,
-                            file_size,
-                            file_key,
-                            add_progress,
-                            mark_complete,
-                            acquire_parallel_slot,
-                            release_parallel_slot,
-                            probe_engine=probe_engine,
-                        )
-                    else:
-                        self._transfer_folder_download_file(task, site, src_path, dst_path, file_size, file_key, add_progress, mark_complete, acquire_parallel_slot, release_parallel_slot)
-                except Exception as exc:
-                    if not first_error:
-                        first_error.append(exc)
-                    stop_state["triggered"] = True
-                    return
-                finally:
-                    queue.task_done()
+                    finally:
+                        queue.task_done()
+            finally:
+                reset_engine()
 
         worker_count = max(1, min(self.folder_file_workers, max(1, len(files))))
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
@@ -1670,10 +1727,17 @@ class TaskScheduler:
         acquire_parallel_slot,
         release_parallel_slot,
         probe_engine: Optional[SftpEngine] = None,
+        engine_provider: Optional[Callable[[], SftpEngine]] = None,
     ) -> None:
-        inspector = probe_engine if probe_engine is not None else SftpEngine(site, self.logger)
-        should_disconnect = probe_engine is None
-        if should_disconnect:
+        if probe_engine is not None:
+            inspector = probe_engine
+            should_disconnect = False
+        elif engine_provider is not None:
+            inspector = engine_provider()
+            should_disconnect = False
+        else:
+            inspector = SftpEngine(site, self.logger)
+            should_disconnect = True
             inspector.connect()
         try:
             skip_file, offset = self._inspect_upload_target_state(inspector, remote_path, file_size)
@@ -1699,18 +1763,27 @@ class TaskScheduler:
             finally:
                 release_parallel_slot()
         else:
-            engine = SftpEngine(site, self.logger)
-            engine.connect()
-            try:
-                engine.upload_file(
+            if engine_provider is not None:
+                engine_provider().upload_file(
                     local_path,
                     remote_path,
                     callback=lambda done, _total: add_progress(file_key, done),
                     check_interrupt=self._interrupt_checker(task),
                     offset=offset,
                 )
-            finally:
-                engine.disconnect()
+            else:
+                engine = SftpEngine(site, self.logger)
+                engine.connect()
+                try:
+                    engine.upload_file(
+                        local_path,
+                        remote_path,
+                        callback=lambda done, _total: add_progress(file_key, done),
+                        check_interrupt=self._interrupt_checker(task),
+                        offset=offset,
+                    )
+                finally:
+                    engine.disconnect()
         mark_complete(file_key, file_size)
 
     def _transfer_folder_download_file(
@@ -1725,6 +1798,7 @@ class TaskScheduler:
         mark_complete,
         acquire_parallel_slot,
         release_parallel_slot,
+        engine_provider: Optional[Callable[[], SftpEngine]] = None,
     ) -> None:
         skip_file, offset = self._inspect_download_target_state(local_path, file_size)
         if skip_file:
@@ -1746,18 +1820,27 @@ class TaskScheduler:
             finally:
                 release_parallel_slot()
         else:
-            engine = SftpEngine(site, self.logger)
-            engine.connect()
-            try:
-                engine.download_file(
+            if engine_provider is not None:
+                engine_provider().download_file(
                     remote_path,
                     local_path,
                     callback=lambda done, _total: add_progress(file_key, done),
                     check_interrupt=self._interrupt_checker(task),
                     offset=offset,
                 )
-            finally:
-                engine.disconnect()
+            else:
+                engine = SftpEngine(site, self.logger)
+                engine.connect()
+                try:
+                    engine.download_file(
+                        remote_path,
+                        local_path,
+                        callback=lambda done, _total: add_progress(file_key, done),
+                        check_interrupt=self._interrupt_checker(task),
+                        offset=offset,
+                    )
+                finally:
+                    engine.disconnect()
         mark_complete(file_key, file_size)
 
     def _probe_remote_folder_bundle_support(self, site: SiteConfig, engine: Optional[SftpEngine] = None) -> None:

@@ -24,6 +24,18 @@ from src.shared.models import RemoteEntry, SiteConfig
 from src.shared.paths import ensure_in_sandbox, normalize_remote_path, to_local_fs_path
 
 DEFAULT_STREAM_CHUNK_BYTES = 4 * 1024 * 1024  # 4 MB
+# SSH channel receive window. Paramiko's 2 MB default caps throughput at
+# window/RTT (~160 Mbps at 100 ms); 16 MB keeps high-latency links saturated.
+DEFAULT_SFTP_WINDOW_BYTES = 16 * 1024 * 1024
+
+
+def _sftp_window_bytes() -> int:
+    raw = os.getenv("SSHFERRY_SFTP_WINDOW_BYTES", "")
+    try:
+        value = int(raw) if raw else DEFAULT_SFTP_WINDOW_BYTES
+    except ValueError:
+        return DEFAULT_SFTP_WINDOW_BYTES
+    return max(64 * 1024, value)
 
 
 class SftpEngine:
@@ -108,7 +120,7 @@ class SftpEngine:
                     self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
                 self.ssh_client.connect(**connect_kwargs)
-                self.sftp_client = self.ssh_client.open_sftp()
+                self.sftp_client = self._open_sftp_client()
                 self._connected = True
                 self._ever_connected = True
                 self.logger.info(
@@ -145,6 +157,19 @@ class SftpEngine:
 
         if last_error is not None:
             raise NetworkError(ErrorCode.REMOTE_DISCONNECT, f"SSH error: {last_error}")
+
+    def _open_sftp_client(self) -> SFTPClient:
+        """Open the SFTP channel with an enlarged receive window when possible."""
+        try:
+            transport = self.ssh_client.get_transport()
+            if transport is not None:
+                return SFTPClient.from_transport(
+                    transport,
+                    window_size=_sftp_window_bytes(),
+                )
+        except Exception as e:
+            self.logger.debug(f"Falling back to default SFTP channel: {e}")
+        return self.ssh_client.open_sftp()
 
     def disconnect(self) -> None:
         """Close SSH and SFTP connections."""
@@ -434,31 +459,52 @@ class SftpEngine:
             bytes_transferred = offset
             
             with self.sftp_client.open(normalized_path, 'rb') as remote_file:
-                if hasattr(remote_file, "prefetch"):
-                    try:
-                        remote_file.prefetch(file_size=file_size)
-                    except TypeError:
-                        remote_file.prefetch(file_size)
-                    except Exception:
-                        pass
-                if offset > 0:
-                    remote_file.seek(offset)
-                    
+                use_readv = hasattr(remote_file, "readv") and file_size > offset
+                if not use_readv:
+                    if hasattr(remote_file, "prefetch"):
+                        try:
+                            remote_file.prefetch(file_size=file_size)
+                        except TypeError:
+                            remote_file.prefetch(file_size)
+                        except Exception:
+                            pass
+                    if offset > 0:
+                        remote_file.seek(offset)
+
                 with open(fs_local_path, mode) as local_file:
-                    while True:
-                        # Check for interruption
-                        if check_interrupt and check_interrupt():
-                            raise InterruptedError("Transfer interrupted")
-                        
-                        chunk = remote_file.read(chunk_size)
-                        if not chunk:
-                            break
-                        
-                        local_file.write(chunk)
-                        bytes_transferred += len(chunk)
-                        
-                        if callback:
-                            callback(bytes_transferred, file_size)
+                    if use_readv:
+                        # readv pipelines the requests, and unlike prefetch()
+                        # it fetches only [offset, file_size) on resume.
+                        block_plan = []
+                        position = offset
+                        while position < file_size:
+                            block = min(chunk_size, file_size - position)
+                            block_plan.append((position, block))
+                            position += block
+                        for chunk in remote_file.readv(block_plan):
+                            if check_interrupt and check_interrupt():
+                                raise InterruptedError("Transfer interrupted")
+                            if not chunk:
+                                break
+                            local_file.write(chunk)
+                            bytes_transferred += len(chunk)
+                            if callback:
+                                callback(bytes_transferred, file_size)
+                    else:
+                        while True:
+                            # Check for interruption
+                            if check_interrupt and check_interrupt():
+                                raise InterruptedError("Transfer interrupted")
+
+                            chunk = remote_file.read(chunk_size)
+                            if not chunk:
+                                break
+
+                            local_file.write(chunk)
+                            bytes_transferred += len(chunk)
+
+                            if callback:
+                                callback(bytes_transferred, file_size)
             
             self.logger.info(f"Downloaded {normalized_path} -> {local_path}")
         except InterruptedError:

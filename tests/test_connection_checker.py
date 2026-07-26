@@ -94,6 +94,18 @@ def test_run_all_checks_reuses_single_engine_connection(monkeypatch):
 
     monkeypatch.setattr("src.services.connection_checker.SftpEngine", FakeEngine)
 
+    class FakeSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(
+        "src.services.connection_checker.socket.create_connection",
+        lambda _address, timeout=None: FakeSocket(),
+    )
+
     checker = ConnectionChecker(_site())
     results = checker.run_all_checks()
 

@@ -1,4 +1,5 @@
 """Connection self-check utility for SSH/SFTP connections."""
+import socket
 from dataclasses import dataclass
 from typing import Optional
 
@@ -91,13 +92,12 @@ class ConnectionChecker:
 
     def _check_tcp(self) -> CheckResult:
         """Check if TCP connection can be established."""
-        import socket
-
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(5)
-            sock.connect((self.site_config.host, self.site_config.port))
-            sock.close()
+            # create_connection resolves both IPv4 and IPv6 addresses.
+            with socket.create_connection(
+                (self.site_config.host, self.site_config.port), timeout=5
+            ):
+                pass
             return CheckResult(
                 name="TCP Connection",
                 passed=True,

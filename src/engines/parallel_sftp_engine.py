@@ -273,11 +273,11 @@ class ParallelSftpEngine:
                             if interrupt_event.is_set():
                                 return
 
+                            local_written = 0
                             try:
                                 rf.seek(offset)
                                 f.seek(offset)
                                 remaining = length
-                                local_written = 0
                                 while remaining > 0:
                                     block = min(self.io_block_bytes, remaining)
                                     data = f.read(block)
@@ -308,6 +308,11 @@ class ParallelSftpEngine:
                             except Exception as e:
                                 should_abort = False
                                 with lock:
+                                    # Roll back partial progress so the retried
+                                    # chunk does not double-count bytes.
+                                    bytes_transferred -= local_written
+                                    if last_reported > bytes_transferred:
+                                        last_reported = bytes_transferred
                                     retry_count = chunk_failures.get(offset, 0) + 1
                                     chunk_failures[offset] = retry_count
                                     if retry_count > self.max_chunk_retries:
@@ -440,22 +445,32 @@ class ParallelSftpEngine:
                             if interrupt_event.is_set():
                                 return
 
+                            local_read = 0
                             try:
-                                rf.seek(offset)
                                 f.seek(offset)
-                                remaining = length
-                                local_read = 0
-                                while remaining > 0:
-                                    block = min(self.io_block_bytes, remaining)
-                                    data = rf.read(block)
+                                block_plan: list[Tuple[int, int]] = []
+                                position = offset
+                                while position < offset + length:
+                                    block = min(self.io_block_bytes, offset + length - position)
+                                    block_plan.append((position, block))
+                                    position += block
+                                if hasattr(rf, "readv"):
+                                    # readv pipelines all requests for this
+                                    # chunk instead of one round trip per 32 KB.
+                                    block_iter = zip(block_plan, rf.readv(block_plan))
+                                else:
+                                    rf.seek(offset)
+                                    block_iter = (
+                                        (plan, rf.read(plan[1])) for plan in block_plan
+                                    )
+                                for (block_offset, block), data in block_iter:
                                     if len(data) != block:
                                         raise IOError(
-                                            f"Remote chunk read size mismatch at offset {offset + local_read}: "
+                                            f"Remote chunk read size mismatch at offset {block_offset}: "
                                             f"expected {block}, got {len(data)}"
                                         )
                                     f.write(data)
                                     local_read += len(data)
-                                    remaining -= len(data)
                                     report_now = False
                                     report_value = 0
                                     with lock:
@@ -475,6 +490,11 @@ class ParallelSftpEngine:
                             except Exception as e:
                                 should_abort = False
                                 with lock:
+                                    # Roll back partial progress so the retried
+                                    # chunk does not double-count bytes.
+                                    bytes_transferred -= local_read
+                                    if last_reported > bytes_transferred:
+                                        last_reported = bytes_transferred
                                     retry_count = chunk_failures.get(offset, 0) + 1
                                     chunk_failures[offset] = retry_count
                                     if retry_count > self.max_chunk_retries:

@@ -16,7 +16,10 @@ class LocalFileService:
 
     def list_drives(self) -> list[LocalDriveResponse]:
         drives = self._available_drives()
-        return [LocalDriveResponse(path=drive, label=drive.rstrip('/\\')) for drive in drives]
+        return [
+            LocalDriveResponse(path=drive, label=drive.rstrip('/\\') or drive)
+            for drive in drives
+        ]
 
     def list_dir(self, raw_path: str) -> tuple[str, str | None, list[LocalEntryResponse]]:
         target = self._resolve_existing_path(raw_path, require_dir=True)

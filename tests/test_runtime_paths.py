@@ -47,6 +47,7 @@ def test_app_data_dir_falls_back_to_user_dir_when_portable_dir_is_read_only(monk
     monkeypatch.delenv("SSHFERRY_DATA_DIR", raising=False)
     monkeypatch.setattr(runtime_paths, "is_frozen_runtime", lambda: True)
     monkeypatch.setattr(runtime_paths.sys, "executable", str(exe_path))
+    monkeypatch.setattr(runtime_paths.sys, "platform", "win32")
     monkeypatch.setattr(Path, "home", lambda: user_home)
     monkeypatch.setattr(Path, "mkdir", fake_mkdir)
 

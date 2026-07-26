@@ -1,4 +1,5 @@
 """Path utilities and sandbox validation for SSHFerry."""
+import ntpath
 import os
 import posixpath
 import sys
@@ -47,11 +48,13 @@ def to_local_fs_path(path: str | os.PathLike[str]) -> str:
     if sys.platform != "win32" or not raw:
         return raw
 
-    normalized = os.path.normpath(raw)
+    # Use ntpath explicitly (== os.path on Windows) so Windows semantics hold
+    # even when sys.platform is patched in cross-platform tests.
+    normalized = ntpath.normpath(raw)
     if normalized.startswith("\\\\?\\") or normalized.startswith("\\\\.\\"):
         return normalized
 
-    absolute = os.path.abspath(normalized)
+    absolute = normalized if ntpath.isabs(normalized) else ntpath.abspath(normalized)
     if absolute.startswith("\\\\"):
         return "\\\\?\\UNC\\" + absolute.lstrip("\\")
     return "\\\\?\\" + absolute
