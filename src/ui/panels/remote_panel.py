@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.shared.models import RemoteEntry
+from src.ui.i18n import tr
 from src.ui.theme import TOKENS, alpha_hex, mono_font
 from src.ui.widgets.feedback import install_button_feedback
 
@@ -113,7 +114,7 @@ class DraggableTreeWidget(QTreeWidget):
         # Start drag
         drag = QDrag(self)
         drag.setMimeData(mime_data)
-        label = os.path.basename(paths[0]) if len(paths) == 1 else f"{len(paths)} items"
+        label = os.path.basename(paths[0]) if len(paths) == 1 else tr("label.items", count=len(paths))
         drag.setPixmap(self._build_drag_pixmap(label))
         drag.exec(Qt.CopyAction)
 
@@ -191,11 +192,11 @@ class RemotePanel(QWidget):
         self.btn_up = QPushButton("..")
         self.btn_up.setProperty("variant", "ghost")
         self.btn_up.setFixedSize(34, 34)
-        self.btn_up.setToolTip("Go to parent directory")
+        self.btn_up.setToolTip(tr("nav.up.tooltip"))
         self.btn_up.clicked.connect(lambda: self.request_go_up.emit())
         nav.addWidget(self.btn_up)
 
-        self.path_label = QLabel("Remote: /")
+        self.path_label = QLabel(tr("remote.path.label", path="/"))
         self.path_label.setObjectName("sectionTitle")
         nav.addWidget(self.path_label, stretch=1)
 
@@ -204,7 +205,7 @@ class RemotePanel(QWidget):
         # File tree with drag support
         self.tree = DraggableTreeWidget()
         self.tree.setColumnCount(4)
-        self.tree.setHeaderLabels(["Name", "Type", "Size", "Modified"])
+        self.tree.setHeaderLabels([tr("col.name"), tr("col.type"), tr("col.size"), tr("col.modified")])
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tree.setUniformRowHeights(True)
         self.tree.setAnimated(True)
@@ -251,7 +252,7 @@ class RemotePanel(QWidget):
     def set_path(self, path: str):
         self.current_path = path
         prefix = f"{self.site_name} " if self.site_name else ""
-        self.path_label.setText(f"{prefix}Remote: {path}")
+        self.path_label.setText(f"{prefix}{tr('remote.path.label', path=path)}")
         self.path_changed.emit(path)
 
     def set_session_context(self, session_id: str, site_name: str):
@@ -318,7 +319,7 @@ class RemotePanel(QWidget):
                 if end_index >= len(sorted_entries):
                     if item != self.tree.invisibleRootItem() and not sorted_entries:
                         empty = QTreeWidgetItem(item)
-                        empty.setText(0, "(empty)")
+                        empty.setText(0, tr("tree.empty"))
                         empty.setDisabled(True)
                         item.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
                         item.setData(0, self.ROLE_EMPTY_LOADED, True)
@@ -349,7 +350,7 @@ class RemotePanel(QWidget):
             item = selected[0]
             entry = item.data(0, Qt.UserRole)
             if entry is None:
-                # Placeholder rows ("Loading...", "(empty)") carry no entry.
+                # Loading / empty placeholder rows carry no entry.
                 return self.current_path
             if entry.is_dir:
                 return entry.path
@@ -483,7 +484,7 @@ class RemotePanel(QWidget):
         child.setIcon(0, std_icon)
         child.setFont(0, self._get_font(bold=entry.is_dir))
 
-        child.setText(1, "DIR" if entry.is_dir else "FILE")
+        child.setText(1, tr("tree.type.dir") if entry.is_dir else tr("tree.type.file"))
         child.setText(2, self._format_size(entry.size) if not entry.is_dir else "")
         child.setText(3, entry.mtime_datetime.strftime("%Y-%m-%d %H:%M:%S"))
         child.setFont(2, mono_font(9))
@@ -495,7 +496,7 @@ class RemotePanel(QWidget):
         if entry.is_dir:
             if not self._restore_cached_children(child, entry.path, restore_state):
                 dummy = QTreeWidgetItem(child)
-                dummy.setText(0, "Loading...")
+                dummy.setText(0, tr("tree.loading"))
                 dummy.setDisabled(True)
             child.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
         return child
@@ -515,12 +516,12 @@ class RemotePanel(QWidget):
         state, entries = snapshot
         if state == "loading":
             loading = QTreeWidgetItem(item)
-            loading.setText(0, "Loading...")
+            loading.setText(0, tr("tree.loading"))
             loading.setDisabled(True)
             return True
         if state == "empty":
             empty = QTreeWidgetItem(item)
-            empty.setText(0, "(empty)")
+            empty.setText(0, tr("tree.empty"))
             empty.setDisabled(True)
             item.setData(0, self.ROLE_EMPTY_LOADED, True)
             return True
@@ -550,7 +551,7 @@ class RemotePanel(QWidget):
 
     @staticmethod
     def _has_loading_placeholder(item: QTreeWidgetItem) -> bool:
-        return item.childCount() == 1 and item.child(0).text(0) == "Loading..."
+        return item.childCount() == 1 and item.child(0).text(0) == tr("tree.loading")
 
     # ------------------------------------------------------------------
     # Tree Interaction
@@ -559,7 +560,7 @@ class RemotePanel(QWidget):
     def _on_item_expanded(self, item: QTreeWidgetItem):
         """Handle item expansion - lazy load."""
         # Check if first child is dummy
-        if item.childCount() == 1 and item.child(0).text(0) == "Loading...":
+        if item.childCount() == 1 and item.child(0).text(0) == tr("tree.loading"):
             entry = item.data(0, Qt.UserRole)
             if entry and entry.is_dir:
                 self.request_expand.emit(entry.path, item)
@@ -570,7 +571,7 @@ class RemotePanel(QWidget):
         if item.data(0, self.ROLE_EMPTY_LOADED):
             item.takeChildren()
             loading = QTreeWidgetItem(item)
-            loading.setText(0, "Loading...")
+            loading.setText(0, tr("tree.loading"))
             loading.setDisabled(True)
             item.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
             item.setData(0, self.ROLE_EMPTY_LOADED, False)
@@ -615,29 +616,29 @@ class RemotePanel(QWidget):
         menu = QMenu(self)
 
         target_item = self.tree.itemAt(pos)
-        act_refresh = menu.addAction("Refresh")
+        act_refresh = menu.addAction(tr("action.refresh"))
         act_refresh.triggered.connect(lambda: self._emit_refresh_for_item(target_item))
 
         menu.addSeparator()
 
         selected = self._prepare_context_selection(target_item)
-        
-        act_upload = menu.addAction("Upload here...")
+
+        act_upload = menu.addAction(tr("menu.upload_here"))
         act_upload.triggered.connect(lambda: self.request_upload.emit(target_item))
 
         if selected:
             entry = selected[0]
             if len(selected) == 1:
                 if not entry.is_dir:
-                    act_dl = menu.addAction("Download")
+                    act_dl = menu.addAction(tr("action.download"))
                     act_dl.triggered.connect(lambda: self.request_download.emit(entry))
                 else:
-                    act_dl = menu.addAction("Download folder")
+                    act_dl = menu.addAction(tr("menu.download_folder"))
                     act_dl.triggered.connect(lambda: self.request_download.emit(entry))
 
                 menu.addSeparator()
 
-                act_rename = menu.addAction("Rename")
+                act_rename = menu.addAction(tr("action.rename"))
                 act_rename.triggered.connect(lambda: self._prompt_rename(entry))
 
             delete_label = self._delete_action_label(selected)
@@ -645,7 +646,7 @@ class RemotePanel(QWidget):
             act_delete.triggered.connect(lambda checked=False, entries=list(selected): self._emit_delete_entries(entries, checked))
 
         menu.addSeparator()
-        act_mkdir = menu.addAction("New Folder")
+        act_mkdir = menu.addAction(tr("action.new_folder"))
         act_mkdir.triggered.connect(lambda: self._prompt_mkdir(target_item))
 
         menu.exec(self.tree.viewport().mapToGlobal(pos))
@@ -659,7 +660,7 @@ class RemotePanel(QWidget):
 
     @staticmethod
     def _delete_action_label(entries: list[RemoteEntry]) -> str:
-        return "Delete" if len(entries) == 1 else f"Delete {len(entries)} items"
+        return tr("action.delete") if len(entries) == 1 else tr("label.delete_many", count=len(entries))
 
     def _request_delete_selected_entries(self) -> bool:
         selected = self.get_selected_entries()
@@ -672,13 +673,13 @@ class RemotePanel(QWidget):
         self.request_delete_entries.emit(entries)
 
     def _prompt_mkdir(self, parent_item: QTreeWidgetItem = None):
-        name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
+        name, ok = QInputDialog.getText(self, tr("dialog.new_folder.title"), tr("dialog.new_folder.prompt"))
         if ok and name.strip():
             self.request_mkdir.emit(name.strip(), parent_item)
 
     def _prompt_rename(self, entry: RemoteEntry):
         new_name, ok = QInputDialog.getText(
-            self, "Rename", "New name:", text=entry.name
+            self, tr("dialog.rename.title"), tr("dialog.rename.prompt"), text=entry.name
         )
         if ok and new_name.strip() and new_name.strip() != entry.name:
             self.request_rename.emit(entry, new_name.strip())

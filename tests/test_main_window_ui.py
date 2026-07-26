@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from PySide6.QtWidgets import QApplication
 
+from src.ui.i18n import tr
 from src.ui.main_window import MainWindow
 from src.ui.panels.task_center import TaskCenterPanel
 from src.shared.models import RemoteEntry, Task
@@ -62,9 +63,9 @@ def test_update_top_bar_status_skips_repeat_text_updates():
     window._update_top_bar_status(tasks)
     window._update_top_bar_status(tasks)
 
-    assert window.topbar_sites_label.calls == ["Sites: 2"]
-    assert window.topbar_sessions_label.calls == ["Sessions: 1"]
-    assert window.topbar_tasks_label.calls == ["Active Tasks: 1"]
+    assert window.topbar_sites_label.calls == [tr("topbar.sites", count=2)]
+    assert window.topbar_sessions_label.calls == [tr("topbar.sessions", count=1)]
+    assert window.topbar_tasks_label.calls == [tr("topbar.tasks", count=1)]
 
 
 def test_task_center_reuses_checkbox_widget_for_same_task_ids():

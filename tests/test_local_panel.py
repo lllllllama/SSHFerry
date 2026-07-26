@@ -3,6 +3,7 @@ import os
 
 from PySide6.QtWidgets import QApplication, QFileIconProvider
 
+from src.ui.i18n import tr
 from src.ui.panels.local_panel import LocalPanel, NameColumnDelegate
 
 
@@ -47,8 +48,8 @@ def test_local_panel_search_accepts_windows_style_patterns():
 
     assert panel.path_edit.objectName() == "localPathInput"
     assert panel.search_edit.objectName() == "localSearchInput"
-    assert panel.search_label.text() == "Find"
-    assert panel.search_status.text() == "Ready"
+    assert panel.search_label.text() == tr("local.search.label")
+    assert panel.search_status.text() == tr("local.search.ready")
     assert panel.btn_clear_search.isEnabled() is False
     assert panel.find_shortcut is not None
     assert panel.clear_search_shortcut is not None
@@ -68,4 +69,4 @@ def test_local_panel_search_accepts_windows_style_patterns():
 
     assert panel.search_edit.text() == ""
     assert panel.model._search_terms == []
-    assert panel.search_status.text() == "Ready"
+    assert panel.search_status.text() == tr("local.search.ready")

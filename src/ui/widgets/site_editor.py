@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.shared.models import SiteConfig
+from src.ui.i18n import tr
 from src.ui.theme import TOKENS
 from src.ui.widgets.feedback import install_button_feedback
 
@@ -39,7 +40,7 @@ class SiteEditorDialog(QDialog):
         """
         super().__init__(parent)
         self.site_config = site_config
-        self.setWindowTitle("Edit Site" if site_config else "New Site")
+        self.setWindowTitle(tr("dialog.site.edit_title") if site_config else tr("dialog.site.new_title"))
         self.setMinimumWidth(500)
         self.setStyleSheet(
             f"QDialog {{ background-color: {TOKENS.bg_surface}; }}"
@@ -56,17 +57,15 @@ class SiteEditorDialog(QDialog):
         layout = QVBoxLayout(self)
 
         # SSH Command Parser Section
-        parse_group = QGroupBox("Quick Import from SSH Command")
+        parse_group = QGroupBox(tr("site.group.import"))
         parse_layout = QVBoxLayout()
 
         self.ssh_command_input = QTextEdit()
-        self.ssh_command_input.setPlaceholderText(
-            "Paste SSH command here, e.g.:\nssh -p 16921 root@connect.westb.seetacloud.com"
-        )
+        self.ssh_command_input.setPlaceholderText(tr("site.ssh.placeholder"))
         self.ssh_command_input.setMaximumHeight(60)
         parse_layout.addWidget(self.ssh_command_input)
 
-        self.parse_button = QPushButton("Parse SSH Command")
+        self.parse_button = QPushButton(tr("site.parse_button"))
         self.parse_button.clicked.connect(self._parse_ssh_command)
         parse_layout.addWidget(self.parse_button)
 
@@ -74,77 +73,74 @@ class SiteEditorDialog(QDialog):
         layout.addWidget(parse_group)
 
         # Basic Configuration Section
-        basic_group = QGroupBox("Basic Configuration")
+        basic_group = QGroupBox(tr("site.group.basic"))
         basic_layout = QFormLayout()
 
         self.name_edit = QLineEdit()
-        basic_layout.addRow("Site Name:", self.name_edit)
+        basic_layout.addRow(tr("site.field.name"), self.name_edit)
 
         self.host_edit = QLineEdit()
-        basic_layout.addRow("Host:", self.host_edit)
+        basic_layout.addRow(tr("site.field.host"), self.host_edit)
 
         self.port_spin = QSpinBox()
         self.port_spin.setRange(1, 65535)
         self.port_spin.setValue(22)
-        basic_layout.addRow("Port:", self.port_spin)
+        basic_layout.addRow(tr("site.field.port"), self.port_spin)
 
         self.username_edit = QLineEdit()
-        basic_layout.addRow("Username:", self.username_edit)
+        basic_layout.addRow(tr("site.field.username"), self.username_edit)
 
         self.remote_root_edit = QLineEdit()
         self.remote_root_edit.setPlaceholderText("/")
-        basic_layout.addRow("Remote Root (Sandbox):", self.remote_root_edit)
+        basic_layout.addRow(tr("site.field.remote_root"), self.remote_root_edit)
 
         self.default_protocol_combo = QComboBox()
         self.default_protocol_combo.addItems(["sftp", "scp"])
-        basic_layout.addRow("Default Transfer Protocol:", self.default_protocol_combo)
+        basic_layout.addRow(tr("site.field.protocol"), self.default_protocol_combo)
 
         basic_group.setLayout(basic_layout)
         layout.addWidget(basic_group)
 
         # Authentication Section
-        auth_group = QGroupBox("Authentication")
+        auth_group = QGroupBox(tr("site.group.auth"))
         auth_layout = QFormLayout()
 
         self.auth_method_combo = QComboBox()
         self.auth_method_combo.addItems(["password", "key"])
         self.auth_method_combo.currentTextChanged.connect(self._on_auth_method_changed)
-        auth_layout.addRow("Method:", self.auth_method_combo)
+        auth_layout.addRow(tr("site.field.method"), self.auth_method_combo)
 
         self.password_edit = QLineEdit()
         self.password_edit.setEchoMode(QLineEdit.Password)
-        self.password_edit.setPlaceholderText("Enter password")
-        auth_layout.addRow("Password:", self.password_edit)
+        self.password_edit.setPlaceholderText(tr("site.password.placeholder"))
+        auth_layout.addRow(tr("site.field.password"), self.password_edit)
 
-        self.remember_password_check = QCheckBox("Save password to sites.json")
-        self.remember_password_check.setToolTip("Disabled by default. Enable only on trusted devices.")
+        self.remember_password_check = QCheckBox(tr("site.remember_password"))
+        self.remember_password_check.setToolTip(tr("site.remember_password.tooltip"))
         auth_layout.addRow("", self.remember_password_check)
 
         self.key_path_edit = QLineEdit()
-        self.key_path_button = QPushButton("Browse...")
+        self.key_path_button = QPushButton(tr("action.browse"))
         self.key_path_button.clicked.connect(self._browse_key_path)
-        auth_layout.addRow("Key Path:", self.key_path_edit)
+        auth_layout.addRow(tr("site.field.key_path"), self.key_path_edit)
         auth_layout.addRow("", self.key_path_button)
 
         self.key_passphrase_edit = QLineEdit()
         self.key_passphrase_edit.setEchoMode(QLineEdit.Password)
-        self.key_passphrase_edit.setPlaceholderText("Key passphrase (if required)")
-        auth_layout.addRow("Key Passphrase:", self.key_passphrase_edit)
+        self.key_passphrase_edit.setPlaceholderText(tr("site.key_passphrase.placeholder"))
+        auth_layout.addRow(tr("site.field.key_passphrase"), self.key_passphrase_edit)
 
         auth_group.setLayout(auth_layout)
         layout.addWidget(auth_group)
 
         # Advanced Section
-        advanced_group = QGroupBox("Advanced")
+        advanced_group = QGroupBox(tr("site.group.advanced"))
         advanced_layout = QFormLayout()
 
         self.proxy_jump_edit = QLineEdit()
-        self.proxy_jump_edit.setPlaceholderText("[user@]jump-host[:port] (optional)")
-        self.proxy_jump_edit.setToolTip(
-            "Connect through a jump host (ProxyJump). The jump host reuses this "
-            "site's key/agent credentials."
-        )
-        advanced_layout.addRow("Jump Host:", self.proxy_jump_edit)
+        self.proxy_jump_edit.setPlaceholderText(tr("site.jump.placeholder"))
+        self.proxy_jump_edit.setToolTip(tr("site.jump.tooltip"))
+        advanced_layout.addRow(tr("site.field.jump_host"), self.proxy_jump_edit)
 
         advanced_group.setLayout(advanced_layout)
         layout.addWidget(advanced_group)
@@ -203,9 +199,9 @@ class SiteEditorDialog(QDialog):
         """Browse for SSH key file."""
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Select SSH Private Key",
+            tr("dialog.select_key.title"),
             "",
-            "All Files (*)"
+            tr("dialog.select_key.filter")
         )
         if file_path:
             self.key_path_edit.setText(file_path)
@@ -236,17 +232,17 @@ class SiteEditorDialog(QDialog):
         # Validate required fields with user feedback
         missing = []
         if not self.name_edit.text().strip():
-            missing.append("Site Name")
+            missing.append(tr("site.name"))
         if not self.host_edit.text().strip():
-            missing.append("Host")
+            missing.append(tr("site.host"))
         if not self.username_edit.text().strip():
-            missing.append("Username")
+            missing.append(tr("site.username"))
 
         if missing:
             QMessageBox.warning(
                 self,
-                "Missing Required Fields",
-                "Please fill in the following fields:\n- " + "\n- ".join(missing)
+                tr("dialog.missing.title"),
+                tr("dialog.missing.body", fields="\n- ".join(missing)),
             )
             return
 

@@ -43,6 +43,7 @@ from src.shared.logging_ import setup_logger
 from src.shared.models import RemoteEntry, SiteConfig
 from src.shared.paths import ensure_in_sandbox, get_remote_parent, join_remote_path, normalize_remote_path
 from src.shared.remote_scan import summarize_remote_tree_via_shell
+from src.ui.i18n import get_language, set_language, tr
 from src.ui.theme import TOKENS
 from src.ui.panels.local_panel import LocalPanel
 from src.ui.panels.remote_panel import RemotePanel
@@ -317,7 +318,7 @@ class MainWindow(QMainWindow):
         left_lay = QVBoxLayout(left)
         left_lay.setContentsMargins(TOKENS.spacing_lg, TOKENS.spacing_lg, TOKENS.spacing_lg, TOKENS.spacing_lg)
         left_lay.setSpacing(TOKENS.spacing_sm)
-        sites_title = QLabel("Sites")
+        sites_title = QLabel(tr("site.section.title"))
         sites_title.setObjectName("sectionTitle")
         left_lay.addWidget(sites_title)
         self.site_list = QListWidget()
@@ -341,7 +342,7 @@ class MainWindow(QMainWindow):
         self.btn_add_site.setProperty("chrome", "icon")
         self.btn_add_site.setProperty("variant", "primary")
         self.btn_add_site.setIcon(self.style().standardIcon(QStyle.SP_FileDialogNewFolder))
-        self.btn_add_site.setToolTip("Add Site")
+        self.btn_add_site.setToolTip(tr("site.add"))
         self.btn_add_site.clicked.connect(self._add_site)
         self._configure_site_icon_button(self.btn_add_site)
         site_actions_layout.addWidget(self.btn_add_site, 1)
@@ -349,7 +350,7 @@ class MainWindow(QMainWindow):
         self.btn_edit_site = QPushButton()
         self.btn_edit_site.setProperty("chrome", "icon")
         self.btn_edit_site.setIcon(self.style().standardIcon(QStyle.SP_FileDialogDetailedView))
-        self.btn_edit_site.setToolTip("Edit Site")
+        self.btn_edit_site.setToolTip(tr("site.edit"))
         self.btn_edit_site.clicked.connect(self._edit_site)
         self._configure_site_icon_button(self.btn_edit_site)
         site_actions_layout.addWidget(self.btn_edit_site, 1)
@@ -357,7 +358,7 @@ class MainWindow(QMainWindow):
         self.btn_check_connection = QPushButton()
         self.btn_check_connection.setProperty("chrome", "icon")
         self.btn_check_connection.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
-        self.btn_check_connection.setToolTip("Check Connection")
+        self.btn_check_connection.setToolTip(tr("site.check"))
         self.btn_check_connection.clicked.connect(self._check_connection)
         self._configure_site_icon_button(self.btn_check_connection)
         site_actions_layout.addWidget(self.btn_check_connection, 1)
@@ -366,27 +367,27 @@ class MainWindow(QMainWindow):
         self.btn_remove_site.setProperty("chrome", "icon")
         self.btn_remove_site.setProperty("variant", "danger")
         self.btn_remove_site.setIcon(self.style().standardIcon(QStyle.SP_TrashIcon))
-        self.btn_remove_site.setToolTip("Remove Site")
+        self.btn_remove_site.setToolTip(tr("site.remove"))
         self.btn_remove_site.clicked.connect(self._remove_site)
         self._configure_site_icon_button(self.btn_remove_site)
         site_actions_layout.addWidget(self.btn_remove_site, 1)
         left_lay.addWidget(site_actions)
 
-        self.btn_new_session = QPushButton("Connect")
+        self.btn_new_session = QPushButton(tr("session.connect"))
         self.btn_new_session.setProperty("variant", "primary")
         self.btn_new_session.clicked.connect(self._create_session_from_selection)
         left_lay.addWidget(self.btn_new_session)
 
-        self.btn_remove_session = QPushButton("Disconnect")
+        self.btn_remove_session = QPushButton(tr("session.disconnect"))
         self.btn_remove_session.setProperty("variant", "danger")
         self.btn_remove_session.clicked.connect(self._remove_selected_sessions)
         left_lay.addWidget(self.btn_remove_session)
 
-        protocol_label = QLabel("Task Protocol Override")
+        protocol_label = QLabel(tr("protocol.override.title"))
         protocol_label.setObjectName("sectionTitle")
         left_lay.addWidget(protocol_label)
         self.transfer_override_combo = QComboBox()
-        self.transfer_override_combo.addItem("Auto (Site Default)", "auto")
+        self.transfer_override_combo.addItem(tr("protocol.auto"), "auto")
         self.transfer_override_combo.addItem("SFTP", "sftp")
         self.transfer_override_combo.addItem("SCP", "scp")
         left_lay.addWidget(self.transfer_override_combo)
@@ -440,10 +441,10 @@ class MainWindow(QMainWindow):
         log_layout = QVBoxLayout(log_panel)
         log_layout.setContentsMargins(TOKENS.spacing_sm, TOKENS.spacing_sm, TOKENS.spacing_sm, TOKENS.spacing_sm)
         log_layout.setSpacing(2)
-        log_title = QLabel("Log")
+        log_title = QLabel(tr("log.title"))
         log_title.setObjectName("sectionTitle")
         log_layout.addWidget(log_title)
-        log_hint = QLabel("Recent runtime output")
+        log_hint = QLabel(tr("log.hint"))
         log_hint.setObjectName("mutedLabel")
         log_layout.addWidget(log_hint)
 
@@ -490,17 +491,17 @@ class MainWindow(QMainWindow):
         if item:
             self.site_list.setCurrentItem(item)
         menu = QMenu(self)
-        act_add = menu.addAction("Add Site")
+        act_add = menu.addAction(tr("site.add"))
         act_add.triggered.connect(self._add_site)
         if self._selected_site():
-            act_edit = menu.addAction("Edit Site")
+            act_edit = menu.addAction(tr("site.edit"))
             act_edit.triggered.connect(self._edit_site)
-            act_check = menu.addAction("Check Connection")
+            act_check = menu.addAction(tr("site.check"))
             act_check.triggered.connect(self._check_connection)
-            act_remove = menu.addAction("Remove Site")
+            act_remove = menu.addAction(tr("site.remove"))
             act_remove.triggered.connect(self._remove_site)
             menu.addSeparator()
-            act_connect = menu.addAction("Connect")
+            act_connect = menu.addAction(tr("session.connect"))
             act_connect.triggered.connect(self._create_session_from_selection)
         menu.exec(self.site_list.mapToGlobal(pos))
 
@@ -529,11 +530,11 @@ class MainWindow(QMainWindow):
         status_layout = QHBoxLayout(status_box)
         status_layout.setContentsMargins(0, 0, 0, 0)
         status_layout.setSpacing(10)
-        self.topbar_sites_label = QLabel("Sites: 0")
+        self.topbar_sites_label = QLabel(tr("topbar.sites", count=0))
         self.topbar_sites_label.setObjectName("summaryLabel")
-        self.topbar_sessions_label = QLabel("Sessions: 0")
+        self.topbar_sessions_label = QLabel(tr("topbar.sessions", count=0))
         self.topbar_sessions_label.setObjectName("summaryLabel")
-        self.topbar_tasks_label = QLabel("Tasks: 0")
+        self.topbar_tasks_label = QLabel(tr("topbar.tasks", count=0))
         self.topbar_tasks_label.setObjectName("summaryLabel")
         status_layout.addWidget(self.topbar_sites_label)
         status_layout.addWidget(self.topbar_sessions_label)
@@ -557,16 +558,16 @@ class MainWindow(QMainWindow):
         art.setAlignment(Qt.AlignCenter)
         art.setStyleSheet(f"color: {TOKENS.accent};")
 
-        title = QLabel("No remote sessions open")
+        title = QLabel(tr("remote.empty.title"))
         title.setObjectName("sectionTitle")
         title.setAlignment(Qt.AlignCenter)
 
-        body = QLabel("Select a site on the left, then connect to open a remote workspace.")
+        body = QLabel(tr("remote.empty.body"))
         body.setObjectName("mutedLabel")
         body.setAlignment(Qt.AlignCenter)
         body.setWordWrap(True)
 
-        button = QPushButton("Quick Connect")
+        button = QPushButton(tr("remote.empty.button"))
         button.setProperty("variant", "primary")
         button.clicked.connect(self._create_session_from_selection)
 
@@ -580,17 +581,35 @@ class MainWindow(QMainWindow):
 
     def _create_menu_bar(self):
         menu_bar = self.menuBar()
-        file_menu = menu_bar.addMenu("&File")
-        new_window_action = file_menu.addAction("&New Window")
+        file_menu = menu_bar.addMenu(tr("menu.file"))
+        new_window_action = file_menu.addAction(tr("menu.new_window"))
         new_window_action.setShortcut("Ctrl+N")
         new_window_action.triggered.connect(self._new_window)
         file_menu.addSeparator()
-        add_session_action = file_menu.addAction("Open Session")
+        add_session_action = file_menu.addAction(tr("menu.open_session"))
         add_session_action.setShortcut("Ctrl+T")
         add_session_action.triggered.connect(self._create_session_from_selection)
-        close_action = file_menu.addAction("&Close Window")
+        close_action = file_menu.addAction(tr("menu.close_window"))
         close_action.setShortcut("Ctrl+W")
         close_action.triggered.connect(self.close)
+
+        language_menu = menu_bar.addMenu(tr("menu.language"))
+        act_lang_zh = language_menu.addAction(tr("menu.language.zh"))
+        act_lang_zh.setCheckable(True)
+        act_lang_zh.setChecked(get_language() == "zh")
+        act_lang_zh.triggered.connect(lambda: self._set_language("zh"))
+        act_lang_en = language_menu.addAction(tr("menu.language.en"))
+        act_lang_en.setCheckable(True)
+        act_lang_en.setChecked(get_language() == "en")
+        act_lang_en.triggered.connect(lambda: self._set_language("en"))
+
+    def _set_language(self, lang: str):
+        set_language(lang, persist=True)
+        QMessageBox.information(
+            self,
+            tr("dialog.language.title"),
+            tr("dialog.language.restart"),
+        )
 
     def _new_window(self):
         if self.window_manager:
@@ -653,7 +672,7 @@ class MainWindow(QMainWindow):
     def _edit_site(self):
         site = self._selected_site()
         if not site:
-            QMessageBox.warning(self, "No Site Selected", "Please select a site to edit.")
+            QMessageBox.warning(self, tr("dialog.no_site.title"), tr("dialog.no_site.edit_body"))
             return
         idx = self.sites.index(site)
         dlg = SiteEditorDialog(site_config=site, parent=self)
@@ -672,13 +691,13 @@ class MainWindow(QMainWindow):
     def _remove_site(self):
         site = self._selected_site()
         if not site:
-            QMessageBox.warning(self, "No Site Selected", "Please select a site to remove.")
+            QMessageBox.warning(self, tr("dialog.no_site.title"), tr("dialog.no_site.remove_body"))
             return
 
         answer = QMessageBox.question(
             self,
-            "Remove Site",
-            f"Remove site '{site.name}'?\n\nThis will also close any open sessions using it.",
+            tr("dialog.remove_site.title"),
+            tr("dialog.remove_site.body", name=site.name),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -703,19 +722,22 @@ class MainWindow(QMainWindow):
         site = self._selected_site()
         if not site:
             return
-        self._log(f"Checking {site.name}...")
+        self._log(tr("log.checking", name=site.name))
         thread = ConnectionCheckThread(site)
         thread.check_completed.connect(self._on_check_completed)
         self._start_thread(thread)
 
     def _on_check_completed(self, results: list):
-        lines = [f"{r.name}: {'OK' if r.passed else 'FAIL'} - {r.message}" for r in results]
-        QMessageBox.information(self, "Connection Check", "\n".join(lines))
+        lines = [
+            f"{r.name}: {tr('check.ok') if r.passed else tr('check.fail')} - {r.message}"
+            for r in results
+        ]
+        QMessageBox.information(self, tr("dialog.check.title"), "\n".join(lines))
 
     def _create_session_from_selection(self):
         sites = self._selected_sites()
         if not sites:
-            QMessageBox.warning(self, "No Site Selected", "Select a site first.")
+            QMessageBox.warning(self, tr("dialog.no_site.title"), tr("dialog.no_site.select_body"))
             return
         for site in sites:
             matching_sessions = [
@@ -741,18 +763,18 @@ class MainWindow(QMainWindow):
         header = QHBoxLayout()
         header.setSpacing(TOKENS.spacing_sm)
         selected_box = QCheckBox()
-        selected_box.setToolTip("Select this session for batch disconnect")
+        selected_box.setToolTip(tr("session.select.tooltip"))
         selected_box.stateChanged.connect(lambda _state, sid=session_id: self._update_site_action_buttons())
         selector = QComboBox()
         selector.setObjectName("sessionSiteSelector")
         selector.setMinimumWidth(220)
         self._populate_site_selector(selector, site.name)
-        status_label = QLabel("Disconnected")
+        status_label = QLabel(tr("session.status.disconnected"))
         status_label.setObjectName("mutedLabel")
-        btn_refresh = QPushButton("Refresh")
+        btn_refresh = QPushButton(tr("action.refresh"))
         btn_refresh.setProperty("variant", "ghost")
         btn_refresh.clicked.connect(lambda: self._activate_and_run(session_id, self._refresh_or_reconnect_session))
-        btn_close = QPushButton("Close")
+        btn_close = QPushButton(tr("action.close"))
         btn_close.setProperty("variant", "danger")
         btn_close.clicked.connect(lambda: self._close_session(session_id))
         header.addWidget(selected_box)
@@ -801,7 +823,7 @@ class MainWindow(QMainWindow):
         self._rebalance_remote_splitter()
         self._set_active_session(session_id)
         self._update_site_action_buttons()
-        self._log(f"Opened session for {site.name}")
+        self._log(tr("log.session.opened", name=site.name))
         return session_id
 
     def _remove_selected_sessions(self):
@@ -865,15 +887,15 @@ class MainWindow(QMainWindow):
         session.panel.reset_view_state()
         session.panel.set_path(site.remote_root or "/")
         session.connected = False
-        session.status_label.setText("Disconnected")
+        session.status_label.setText(tr("session.status.disconnected"))
         self._set_active_session(session_id)
 
     def _ensure_site_credentials(self, site: SiteConfig) -> bool:
         if site.auth_method == "password" and not site.password:
             pwd, ok = QInputDialog.getText(
                 self,
-                "Password Required",
-                f"Password for {site.username}@{site.host}:",
+                tr("dialog.password.title"),
+                tr("dialog.password.body", user=site.username, host=site.host),
                 QLineEdit.Password,
             )
             if not ok:
@@ -891,7 +913,7 @@ class MainWindow(QMainWindow):
         if not self._ensure_site_credentials(site):
             return
         session.connected = True
-        session.status_label.setText(f"Connected: {site.name}")
+        session.status_label.setText(tr("session.status.connected", name=site.name))
         session.panel.set_session_context(session_id, site.name)
         self._list_remote_dir(session_id, target_path or site.remote_root, retry_on_failure=False)
 
@@ -1082,7 +1104,7 @@ class MainWindow(QMainWindow):
             if parent_item:
                 target_item = parent_item if isValid(parent_item) else session.panel.find_item_by_path(path)
                 if not target_item:
-                    self._log(f"[{session.site.name}] Ignored stale list result for {path}")
+                    self._log(tr("log.stale_list", name=session.site.name, path=path))
                     return
                 session.panel.populate_node(target_item, entries, preserve_state=True)
             else:
@@ -1090,7 +1112,7 @@ class MainWindow(QMainWindow):
                 session.panel.set_path(path)
                 session.panel.set_root_entries(entries, preserve_state=preserve_state)
             session.connected = True
-            session.status_label.setText(f"Connected: {session.site.name}")
+            session.status_label.setText(tr("session.status.connected", name=session.site.name))
         finally:
             self._drain_session_list_queue(session_id)
 
@@ -1120,7 +1142,7 @@ class MainWindow(QMainWindow):
         if retry_on_failure and session and self._ensure_site_credentials(session.site):
             if request_key is not None:
                 self._finalize_list_request(request_key, drain_pending=False)
-            self._log(f"Refreshing {session.site.name} after disconnect on {path}")
+            self._log(tr("log.refresh_after_disconnect", name=session.site.name, path=path))
             self._list_remote_dir(
                 session_id,
                 path,
@@ -1133,15 +1155,15 @@ class MainWindow(QMainWindow):
             self._finalize_list_request(request_key)
         if session:
             session.connected = False
-            session.status_label.setText("Disconnected")
-        self._log(f"List failed ({path}): {msg}")
+            session.status_label.setText(tr("session.status.disconnected"))
+        self._log(tr("log.list_failed", path=path, msg=msg))
         if not suppress_error_dialog:
-            QMessageBox.critical(self, "Error", msg)
+            QMessageBox.critical(self, tr("dialog.error.title"), msg)
 
     def _on_remote_entry_activated(self, session_id: str, entry: RemoteEntry):
         session = self.sessions.get(session_id)
         if session:
-            self._log(f"[{session.site.name}] Activated: {entry.path}")
+            self._log(tr("log.activated", name=session.site.name, path=entry.path))
 
     def _remote_expand(self, session_id: str, path: str, item: QTreeWidgetItem):
         self._list_remote_dir(session_id, path, item)
@@ -1162,7 +1184,7 @@ class MainWindow(QMainWindow):
         current_path = session.panel.current_path or session.site.remote_root or "/"
         if not self._ensure_site_credentials(session.site):
             return
-        session.status_label.setText(f"Refreshing: {session.site.name}")
+        session.status_label.setText(tr("session.status.refreshing", name=session.site.name))
         self._list_remote_dir(
             session_id,
             current_path,
@@ -1178,7 +1200,7 @@ class MainWindow(QMainWindow):
             return
         if not self._ensure_site_credentials(session.site):
             return
-        session.status_label.setText(f"Refreshing: {session.site.name}")
+        session.status_label.setText(tr("session.status.refreshing", name=session.site.name))
         self._list_remote_dir(session_id, path, item, retry_on_failure=True)
 
     def _refresh_remote_path_context(self, session_id: str, path: str | None):
@@ -1207,7 +1229,7 @@ class MainWindow(QMainWindow):
         full = join_remote_path(parent_path, name)
         thread = RemoteOpThread(session.site, "mkdir", full)
         thread.op_done.connect(lambda sid=session_id, path=parent_path: self._refresh_remote_path_context(sid, path))
-        thread.op_failed.connect(lambda msg: self._op_error("mkdir", msg))
+        thread.op_failed.connect(lambda msg: self._op_error(tr("op.mkdir"), msg))
         self._start_thread(thread)
 
     def _remote_delete(self, session_id: str, entry: RemoteEntry):
@@ -1218,13 +1240,13 @@ class MainWindow(QMainWindow):
         entries = self._prune_nested_remote_entries(entries)
         if not session or not entries:
             return
-        label = entries[0].name if len(entries) == 1 else f"{len(entries)} items"
+        label = entries[0].name if len(entries) == 1 else tr("label.items", count=len(entries))
         has_dirs = any(entry.is_dir for entry in entries)
-        detail = " (folders are removed recursively)" if has_dirs else ""
+        detail = tr("delete.recursive.detail") if has_dirs else ""
         answer = QMessageBox.question(
             self,
-            "Delete Remote",
-            f"Delete {label} from {session.site.name}?{detail}",
+            tr("dialog.delete_remote.title"),
+            tr("dialog.delete_remote.body", label=label, name=session.site.name, detail=detail),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -1234,7 +1256,7 @@ class MainWindow(QMainWindow):
         parent_path = parent_path or session.panel.current_path
         thread = RemoteDeleteManyThread(session.site, entries)
         thread.op_done.connect(lambda sid=session_id, path=parent_path: self._refresh_remote_path_context(sid, path))
-        thread.op_failed.connect(lambda msg: self._op_error("delete", msg))
+        thread.op_failed.connect(lambda msg: self._op_error(tr("op.delete"), msg))
         self._start_thread(thread)
 
     @staticmethod
@@ -1263,7 +1285,7 @@ class MainWindow(QMainWindow):
         new_path = join_remote_path(parent, new_name)
         thread = RemoteOpThread(session.site, "rename", entry.path, new_path)
         thread.op_done.connect(lambda sid=session_id, path=parent: self._refresh_remote_path_context(sid, path))
-        thread.op_failed.connect(lambda msg: self._op_error("rename", msg))
+        thread.op_failed.connect(lambda msg: self._op_error(tr("op.rename"), msg))
         self._start_thread(thread)
 
     def _upload_files(self, session_id: str, target_item: QTreeWidgetItem = None):
@@ -1272,7 +1294,7 @@ class MainWindow(QMainWindow):
     def _upload_local_paths_to_active_remote(self, paths: list[str]):
         session = self._current_session()
         if not session:
-            QMessageBox.warning(self, "No Remote Session", "Open or select a remote session first.")
+            QMessageBox.warning(self, tr("dialog.no_session.title"), tr("dialog.no_session.body"))
             return
         self._activate_and_run(session.session_id, self._upload_paths, paths)
 
@@ -1320,7 +1342,7 @@ class MainWindow(QMainWindow):
             dst_display_name=session.site.name,
         )
         task.preparing = True
-        task.current_file = "Scanning local directory..."
+        task.current_file = tr("task.scanning.local")
         self.scheduler.add_task(task)
         thread = ScanLocalDirThread(local_dir)
 
@@ -1328,8 +1350,8 @@ class MainWindow(QMainWindow):
             self.scheduler.finish_preparing_task(task_id, total_files, total_bytes)
 
         def on_failed(path: str, message: str, task_id=task.task_id):
-            self.scheduler.fail_preparing_task(task_id, f"Local scan failed ({path}): {message}")
-            self._log(f"Local scan failed ({path}): {message}")
+            self.scheduler.fail_preparing_task(task_id, tr("task.scan.local_failed", path=path, msg=message))
+            self._log(tr("task.scan.local_failed", path=path, msg=message))
 
         thread.scan_completed.connect(on_scanned)
         thread.scan_failed.connect(on_failed)
@@ -1395,7 +1417,7 @@ class MainWindow(QMainWindow):
             src_display_name=session.site.name,
         )
         task.preparing = True
-        task.current_file = "Scanning remote directory..."
+        task.current_file = tr("task.scanning.remote")
         self.scheduler.add_task(task)
         thread = ScanRemoteDirThread(session.site, remote_dir)
 
@@ -1403,8 +1425,8 @@ class MainWindow(QMainWindow):
             self.scheduler.finish_preparing_task(task_id, total_files, total_bytes)
 
         def on_failed(path: str, msg: str, task_id=task.task_id):
-            self.scheduler.fail_preparing_task(task_id, f"Download scan failed ({path}): {msg}")
-            self._log(f"Download scan failed ({path}): {msg}")
+            self.scheduler.fail_preparing_task(task_id, tr("task.scan.download_failed", path=path, msg=msg))
+            self._log(tr("task.scan.download_failed", path=path, msg=msg))
 
         thread.scan_completed.connect(on_scanned)
         thread.scan_failed.connect(on_failed)
@@ -1451,7 +1473,7 @@ class MainWindow(QMainWindow):
             dst_session_id=dst_session.session_id,
         )
         task.preparing = True
-        task.current_file = "Scanning remote directory..."
+        task.current_file = tr("task.scanning.remote")
         self.scheduler.add_task(task)
         thread = ScanRemoteDirThread(src_session.site, src_dir)
 
@@ -1459,8 +1481,8 @@ class MainWindow(QMainWindow):
             self.scheduler.finish_preparing_task(task_id, total_files, total_bytes)
 
         def on_failed(path: str, msg: str, task_id=task.task_id):
-            self.scheduler.fail_preparing_task(task_id, f"Remote transfer scan failed ({path}): {msg}")
-            self._log(f"Remote transfer scan failed ({path}): {msg}")
+            self.scheduler.fail_preparing_task(task_id, tr("task.scan.remote_failed", path=path, msg=msg))
+            self._log(tr("task.scan.remote_failed", path=path, msg=msg))
 
         thread.scan_completed.connect(on_scanned)
         thread.scan_failed.connect(on_failed)
@@ -1601,12 +1623,12 @@ class MainWindow(QMainWindow):
                 if not opened:
                     raise OSError(f"Unable to open {path}")
         except Exception as exc:
-            self._log(f"open local file failed: {exc}")
-            QMessageBox.critical(self, "Open File Error", str(exc))
+            self._log(tr("log.open_file_failed", error=exc))
+            QMessageBox.critical(self, tr("dialog.open_file_error.title"), str(exc))
 
     def _op_error(self, op: str, msg: str):
-        self._log(f"{op} failed: {msg}")
-        QMessageBox.critical(self, f"{op} Error", msg)
+        self._log(tr("log.op_failed", op=op, msg=msg))
+        QMessageBox.critical(self, tr("dialog.op_error.title", op=op), msg)
 
     def _load_saved_sites(self):
         saved = self.site_store.load()
@@ -1634,9 +1656,9 @@ class MainWindow(QMainWindow):
         if snapshot == self._topbar_snapshot:
             return
         self._topbar_snapshot = snapshot
-        self.topbar_sites_label.setText(f"Sites: {snapshot[0]}")
-        self.topbar_sessions_label.setText(f"Sessions: {snapshot[1]}")
-        self.topbar_tasks_label.setText(f"Active Tasks: {snapshot[2]}")
+        self.topbar_sites_label.setText(tr("topbar.sites", count=snapshot[0]))
+        self.topbar_sessions_label.setText(tr("topbar.sessions", count=snapshot[1]))
+        self.topbar_tasks_label.setText(tr("topbar.tasks", count=snapshot[2]))
 
     def _log(self, msg: str):
         self.log_text.append(msg)
@@ -1650,8 +1672,8 @@ class MainWindow(QMainWindow):
         if active_tasks:
             answer = QMessageBox.question(
                 self,
-                "Transfers In Progress",
-                f"{len(active_tasks)} transfer(s) are still active. Close anyway?",
+                tr("dialog.transfers_active.title"),
+                tr("dialog.transfers_active.body", count=len(active_tasks)),
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )

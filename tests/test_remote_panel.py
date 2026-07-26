@@ -5,6 +5,7 @@ import time
 from PySide6.QtWidgets import QApplication
 
 from src.shared.models import RemoteEntry
+from src.ui.i18n import tr
 from src.ui.panels.remote_panel import RemotePanel
 
 
@@ -89,7 +90,7 @@ def test_remote_panel_context_selection_preserves_multi_select_for_delete():
     selected = panel._prepare_context_selection(first)
 
     assert [entry.path for entry in selected] == ["/remote/a.txt", "/remote/b.txt"]
-    assert panel._delete_action_label(selected) == "Delete 2 items"
+    assert panel._delete_action_label(selected) == tr("label.delete_many", count=2)
 
 
 def test_remote_panel_delete_selected_entries_emits_all_selected_paths():

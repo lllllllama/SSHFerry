@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.ui.i18n import tr
 from src.ui.theme import TOKENS, alpha_hex, mono_font
 from src.ui.widgets.feedback import install_button_feedback
 
@@ -175,7 +176,7 @@ class DraggableTreeView(QTreeView):
         drag = QDrag(self)
         drag.setMimeData(mime_data)
         first_name = os.path.basename(next(iter(paths)))
-        label = first_name if len(paths) == 1 else f"{len(paths)} items"
+        label = first_name if len(paths) == 1 else tr("label.items", count=len(paths))
         drag.setPixmap(self._build_drag_pixmap(label))
         drag.exec(Qt.CopyAction)
 
@@ -344,7 +345,7 @@ class LocalPanel(QWidget):
         title_box = QVBoxLayout()
         title_box.setContentsMargins(0, 0, 0, 0)
         title_box.setSpacing(0)
-        title = QLabel("Local Workspace")
+        title = QLabel(tr("local.title"))
         title.setObjectName("sectionTitle")
         title_box.addWidget(title)
         header.addLayout(title_box)
@@ -362,7 +363,7 @@ class LocalPanel(QWidget):
         self.drive_combo = QComboBox()
         self.drive_combo.setFixedWidth(60)
         self.drive_combo.setFixedHeight(34)
-        self.drive_combo.setToolTip("Select drive")
+        self.drive_combo.setToolTip(tr("local.drive.tooltip"))
         self._populate_drives()
         self.drive_combo.currentTextChanged.connect(self._on_drive_changed)
         nav.addWidget(self.drive_combo)
@@ -370,15 +371,15 @@ class LocalPanel(QWidget):
         self.btn_up = QPushButton("..")
         self.btn_up.setProperty("variant", "ghost")
         self.btn_up.setFixedSize(34, 34)
-        self.btn_up.setToolTip("Go to parent directory")
+        self.btn_up.setToolTip(tr("nav.up.tooltip"))
         self.btn_up.clicked.connect(self._go_up)
         nav.addWidget(self.btn_up)
 
-        self.btn_refresh = QPushButton("Refresh")
+        self.btn_refresh = QPushButton(tr("action.refresh"))
         self.btn_refresh.setProperty("variant", "ghost")
         self.btn_refresh.setMinimumWidth(78)
         self.btn_refresh.setFixedHeight(34)
-        self.btn_refresh.setToolTip("Refresh")
+        self.btn_refresh.setToolTip(tr("action.refresh"))
         self.btn_refresh.clicked.connect(self._refresh)
         nav.addWidget(self.btn_refresh)
 
@@ -399,19 +400,19 @@ class LocalPanel(QWidget):
         search.setContentsMargins(0, 0, 0, 0)
         search.setSpacing(TOKENS.spacing_xs)
 
-        self.search_label = QLabel("Find")
+        self.search_label = QLabel(tr("local.search.label"))
         self.search_label.setObjectName("localSearchLabel")
         search.addWidget(self.search_label)
 
         self.search_edit = QLineEdit()
         self.search_edit.setObjectName("localSearchInput")
         self.search_edit.setFixedHeight(34)
-        self.search_edit.setPlaceholderText("*.log, .py, report, folder name")
-        self.search_edit.setToolTip("Search by name, extension, wildcard, or path fragment")
+        self.search_edit.setPlaceholderText(tr("local.search.placeholder"))
+        self.search_edit.setToolTip(tr("local.search.tooltip"))
         self.search_edit.textChanged.connect(self._on_search_changed)
         search.addWidget(self.search_edit)
 
-        self.btn_clear_search = QPushButton("Clear")
+        self.btn_clear_search = QPushButton(tr("action.clear"))
         self.btn_clear_search.setProperty("variant", "ghost")
         self.btn_clear_search.setMinimumWidth(66)
         self.btn_clear_search.setFixedHeight(34)
@@ -504,10 +505,10 @@ class LocalPanel(QWidget):
     def _update_search_status(self):
         query = self.search_edit.text().strip()
         if not query:
-            self.search_status.setText("Ready")
+            self.search_status.setText(tr("local.search.ready"))
             return
         visible_count = self.model.rowCount(self.tree.rootIndex())
-        self.search_status.setText(f"{visible_count} visible / {query}")
+        self.search_status.setText(tr("local.search.status", count=visible_count, query=query))
 
     def _go_up(self):
         parent = str(Path(self.current_dir).parent)
@@ -611,32 +612,32 @@ class LocalPanel(QWidget):
         target_dir = self._target_dir_from_pos(self.mapFromGlobal(self.tree.viewport().mapToGlobal(pos)))
         menu = QMenu(self)
 
-        act_open = menu.addAction("Open")
+        act_open = menu.addAction(tr("menu.open"))
         act_open.triggered.connect(lambda: self._open_selected_path(selected_paths))
         act_open.setEnabled(bool(selected_paths))
 
-        act_upload = menu.addAction("Upload to Active Remote")
+        act_upload = menu.addAction(tr("menu.upload_active"))
         act_upload.triggered.connect(lambda: self.request_upload_paths.emit(selected_paths))
         act_upload.setEnabled(bool(selected_paths))
 
         menu.addSeparator()
 
-        act_rename = menu.addAction("Rename")
+        act_rename = menu.addAction(tr("action.rename"))
         act_rename.triggered.connect(lambda: self._rename_selected_path(selected_paths))
         act_rename.setEnabled(len(selected_paths) == 1)
 
-        act_delete = menu.addAction("Delete")
+        act_delete = menu.addAction(tr("action.delete"))
         act_delete.triggered.connect(lambda: self._delete_selected_paths(selected_paths))
         act_delete.setEnabled(bool(selected_paths))
 
         menu.addSeparator()
 
-        act_mkdir = menu.addAction("New Folder")
+        act_mkdir = menu.addAction(tr("action.new_folder"))
         act_mkdir.triggered.connect(lambda: self._create_folder(target_dir))
 
         menu.addSeparator()
 
-        act_refresh = menu.addAction("Refresh")
+        act_refresh = menu.addAction(tr("action.refresh"))
         act_refresh.triggered.connect(self._refresh)
 
         menu.exec(self.tree.viewport().mapToGlobal(pos))
@@ -658,7 +659,7 @@ class LocalPanel(QWidget):
             return
         path = selected_paths[0]
         current_name = os.path.basename(path.rstrip("/\\")) or path
-        new_name, ok = QInputDialog.getText(self, "Rename", "New name:", text=current_name)
+        new_name, ok = QInputDialog.getText(self, tr("dialog.rename.title"), tr("dialog.rename.prompt"), text=current_name)
         if not ok or not new_name.strip() or new_name.strip() == current_name:
             return
         new_path = os.path.join(os.path.dirname(path), new_name.strip())
@@ -669,17 +670,17 @@ class LocalPanel(QWidget):
                 self.path_edit.setText(new_path)
             self._refresh()
         except Exception as exc:
-            QMessageBox.critical(self, "Rename Error", str(exc))
+            QMessageBox.critical(self, tr("dialog.rename_error.title"), str(exc))
 
     def _delete_selected_paths(self, selected_paths: list[str]) -> None:
         paths = self._prune_nested_paths(selected_paths)
         if not paths:
             return
-        label = paths[0] if len(paths) == 1 else f"{len(paths)} items"
+        label = paths[0] if len(paths) == 1 else tr("label.items", count=len(paths))
         answer = QMessageBox.question(
             self,
-            "Delete",
-            f"Delete {label}?",
+            tr("dialog.delete.title"),
+            tr("dialog.delete.body", label=label),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -687,7 +688,7 @@ class LocalPanel(QWidget):
             return
         existing = getattr(self, "_delete_thread", None)
         if existing is not None and existing.isRunning():
-            QMessageBox.information(self, "Delete", "A delete operation is already in progress.")
+            QMessageBox.information(self, tr("dialog.delete.title"), tr("dialog.delete.in_progress"))
             return
         thread = DeletePathsThread(paths, self)
         thread.delete_done.connect(self._on_delete_finished)
@@ -702,17 +703,17 @@ class LocalPanel(QWidget):
     def _on_delete_failed(self, message: str) -> None:
         self._delete_thread = None
         self._refresh()
-        QMessageBox.critical(self, "Delete Error", message)
+        QMessageBox.critical(self, tr("dialog.delete_error.title"), message)
 
     def _create_folder(self, parent_dir: str) -> None:
-        name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
+        name, ok = QInputDialog.getText(self, tr("dialog.new_folder.title"), tr("dialog.new_folder.prompt"))
         if not ok or not name.strip():
             return
         try:
             os.makedirs(os.path.join(parent_dir, name.strip()), exist_ok=False)
             self._refresh()
         except Exception as exc:
-            QMessageBox.critical(self, "Create Folder Error", str(exc))
+            QMessageBox.critical(self, tr("dialog.create_folder_error.title"), str(exc))
 
     @staticmethod
     def _prune_nested_paths(paths: list[str]) -> list[str]:

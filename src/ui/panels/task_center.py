@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.shared.models import Task
+from src.ui.i18n import tr
 from src.ui.theme import TOKENS
 
 
@@ -86,7 +87,7 @@ class TaskCenterPanel(QWidget):
         header_layout.setContentsMargins(TOKENS.spacing_md, TOKENS.spacing_sm, TOKENS.spacing_md, TOKENS.spacing_sm)
         header_layout.setSpacing(2)
 
-        title_label = QLabel("Task Center")
+        title_label = QLabel(tr("task.center.title"))
         title_label.setObjectName("sectionTitle")
         header_layout.addWidget(title_label)
 
@@ -98,7 +99,16 @@ class TaskCenterPanel(QWidget):
         self.table = QTableWidget()
         self.table.setColumnCount(8)
         self.table.setHorizontalHeaderLabels(
-            ["", "ID", "Kind", "Status", "Progress", "Speed", "Source", "Destination"]
+            [
+                "",
+                tr("task.col.id"),
+                tr("task.col.kind"),
+                tr("task.col.status"),
+                tr("task.col.progress"),
+                tr("task.col.speed"),
+                tr("task.col.source"),
+                tr("task.col.destination"),
+            ]
         )
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -119,32 +129,32 @@ class TaskCenterPanel(QWidget):
         layout.addWidget(self.table)
 
         btn_layout = QHBoxLayout()
-        self.cb_select_all = QCheckBox("Select All")
+        self.cb_select_all = QCheckBox(tr("task.select_all"))
         self.cb_select_all.toggled.connect(self._on_select_all_toggled)
         btn_layout.addWidget(self.cb_select_all)
         btn_layout.addStretch()
 
-        self.btn_pause = QPushButton("Pause")
+        self.btn_pause = QPushButton(tr("action.pause"))
         self.btn_pause.setProperty("variant", "ghost")
         self.btn_pause.clicked.connect(self._on_pause_clicked)
         btn_layout.addWidget(self.btn_pause)
 
-        self.btn_resume = QPushButton("Resume")
+        self.btn_resume = QPushButton(tr("action.resume"))
         self.btn_resume.setProperty("variant", "ghost")
         self.btn_resume.clicked.connect(self._on_resume_clicked)
         btn_layout.addWidget(self.btn_resume)
 
-        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel = QPushButton(tr("action.cancel"))
         self.btn_cancel.setProperty("variant", "danger")
         self.btn_cancel.clicked.connect(self._on_cancel_clicked)
         btn_layout.addWidget(self.btn_cancel)
 
-        self.btn_restart = QPushButton("Restart")
+        self.btn_restart = QPushButton(tr("action.restart"))
         self.btn_restart.setProperty("variant", "primary")
         self.btn_restart.clicked.connect(self._on_restart_clicked)
         btn_layout.addWidget(self.btn_restart)
 
-        self.btn_clear_finished = QPushButton("Clear Finished")
+        self.btn_clear_finished = QPushButton(tr("task.clear_finished"))
         self.btn_clear_finished.setProperty("variant", "ghost")
         self.btn_clear_finished.clicked.connect(self._on_clear_finished)
         btn_layout.addWidget(self.btn_clear_finished)
@@ -157,7 +167,7 @@ class TaskCenterPanel(QWidget):
 
     def refresh_tasks(self):
         if not self.tasks:
-            self.summary_label.setText("No tasks")
+            self.summary_label.setText(tr("task.none"))
             self._last_signature = ()
             self._visible_task_ids = ()
             self.table.setRowCount(0)
@@ -180,8 +190,8 @@ class TaskCenterPanel(QWidget):
         visible_tasks = sorted_tasks[:MAX_VISIBLE_TASKS]
         hidden_count = len(sorted_tasks) - len(visible_tasks)
         self.summary_label.setText(
-            f"Showing {len(visible_tasks)} / {len(sorted_tasks)} tasks"
-            + (f" ({hidden_count} hidden)" if hidden_count > 0 else "")
+            tr("task.summary", visible=len(visible_tasks), total=len(sorted_tasks))
+            + (tr("task.summary.hidden", count=hidden_count) if hidden_count > 0 else "")
         )
 
         signature = tuple(
@@ -220,7 +230,12 @@ class TaskCenterPanel(QWidget):
             if task.preparing and task.current_file:
                 progress_text = task.current_file
             elif task.kind.startswith("folder_") and task.subtask_count > 0:
-                progress_text = f"{task.subtask_done}/{task.subtask_count} files ({task.progress_percent:.1f}%)"
+                progress_text = tr(
+                    "task.progress.files",
+                    done=task.subtask_done,
+                    total=task.subtask_count,
+                    percent=task.progress_percent,
+                )
                 if task.status == "running" and task.current_file:
                     progress_text += f" - {task.current_file}"
             else:
@@ -284,12 +299,12 @@ class TaskCenterPanel(QWidget):
                 check_item.setData(Qt.UserRole, task.task_id)
 
         self._set_text_item(row, 1, task.task_id[:8])
-        self._set_text_item(row, 2, task.kind.upper())
+        self._set_text_item(row, 2, self._kind_label(task.kind))
         fg, bg = self._status_colors(task.status)
         self._set_text_item(
             row,
             3,
-            task.status.upper(),
+            self._status_label(task.status),
             alignment=Qt.AlignCenter,
             foreground=fg,
             background=bg,
@@ -510,6 +525,18 @@ class TaskCenterPanel(QWidget):
             return text
         keep = max(8, (max_len - 3) // 2)
         return f"{text[:keep]}...{text[-keep:]}"
+
+    @staticmethod
+    def _status_label(status: str) -> str:
+        key = f"task.status.{status}"
+        label = tr(key)
+        return label if label != key else status.upper()
+
+    @staticmethod
+    def _kind_label(kind: str) -> str:
+        key = f"task.kind.{kind}"
+        label = tr(key)
+        return label if label != key else kind.upper()
 
     @staticmethod
     def _status_colors(status: str) -> tuple[QColor, QColor]:
