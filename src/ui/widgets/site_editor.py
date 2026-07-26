@@ -134,6 +134,21 @@ class SiteEditorDialog(QDialog):
         auth_group.setLayout(auth_layout)
         layout.addWidget(auth_group)
 
+        # Advanced Section
+        advanced_group = QGroupBox("Advanced")
+        advanced_layout = QFormLayout()
+
+        self.proxy_jump_edit = QLineEdit()
+        self.proxy_jump_edit.setPlaceholderText("[user@]jump-host[:port] (optional)")
+        self.proxy_jump_edit.setToolTip(
+            "Connect through a jump host (ProxyJump). The jump host reuses this "
+            "site's key/agent credentials."
+        )
+        advanced_layout.addRow("Jump Host:", self.proxy_jump_edit)
+
+        advanced_group.setLayout(advanced_layout)
+        layout.addWidget(advanced_group)
+
         # Dialog buttons
         button_box = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel
@@ -213,6 +228,8 @@ class SiteEditorDialog(QDialog):
             self.key_path_edit.setText(config.key_path)
         if config.key_passphrase:
             self.key_passphrase_edit.setText(config.key_passphrase)
+        if config.proxy_jump:
+            self.proxy_jump_edit.setText(config.proxy_jump)
 
     def _save_and_accept(self):
         """Validate and save configuration."""
@@ -245,6 +262,7 @@ class SiteEditorDialog(QDialog):
             auth_method=auth_method,
             remote_root=remote_root,
             default_transfer_protocol=self.default_protocol_combo.currentText(),
+            proxy_jump=self.proxy_jump_edit.text().strip() or None,
         )
 
         # Add credentials (runtime only)
