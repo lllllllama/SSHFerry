@@ -33,7 +33,7 @@
 
 `SSHFerry` is built for day-to-day SSH file operations: when terminal commands are too scattered and traditional remote file tools feel too heavy, it gives you a focused local workspace with visible transfer state.
 
-- **Desktop first**: a Python + PySide6 client is the recommended entry point today.
+- **Desktop first**: a Python + PySide6 client is the recommended entry point today; the UI defaults to Chinese and can switch to English via the Language menu or `SSHFERRY_LANG=en`.
 - **Multi-session transfers**: move files local-to-remote, remote-to-local, and remote-to-remote.
 - **A transfer core built for speed**: fully pipelined SFTP reads (`readv` batch prefetch), a 16MB channel window, SSH connections reused across files, parallel chunking for large files, and small files bundled into a single tar transfer — far ahead of request-per-round-trip SFTP clients on high-latency links.
 - **Inspectable tasks**: track progress, speed, and status; pause, resume, cancel, retry, and resume interrupted transfers from where they stopped.
