@@ -36,6 +36,7 @@
 ### 补充说明
 
 - 🇨🇳 [传输规则对齐说明](backend/TRANSFER_RULES_zh.md)
+- 📦 [打包与分发指南](PACKAGING_zh.md)
 
 ## 推荐阅读路径
 

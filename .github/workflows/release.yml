@@ -30,23 +30,73 @@ jobs:
             release/*.sha256
           if-no-files-found: error
 
-  linux-archive:
-    name: Linux source-run archive
+  linux-binary:
+    name: Linux binary (PyInstaller)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Create source archive with run scripts
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libegl1 libgl1 libxkbcommon0 libdbus-1-3
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+      - name: Build with the cross-platform spec
+        run: python -m PyInstaller SSHFerry.spec --noconfirm
+      - name: Package binary
         run: |
           VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)
-          mkdir -p release
-          git archive --format=tar.gz \
-            --prefix="SSHFerry-${VERSION}/" \
-            -o "release/SSHFerry-${VERSION}-source.tar.gz" HEAD
-          sha256sum "release/SSHFerry-${VERSION}-source.tar.gz" \
-            > "release/SSHFerry-${VERSION}-source.sha256"
+          cd dist
+          tar -czf "SSHFerry-${VERSION}-linux-x86_64.tar.gz" SSHFerry
+          sha256sum "SSHFerry-${VERSION}-linux-x86_64.tar.gz" \
+            > "SSHFerry-${VERSION}-linux-x86_64.sha256"
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: sshferry-source
-          path: release/*
+          name: sshferry-linux
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+
+  macos-binary:
+    name: macOS binary (PyInstaller)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+      - name: Build with the cross-platform spec
+        run: python -m PyInstaller SSHFerry.spec --noconfirm
+      # macOS signing + notarization intentionally not wired up: it needs an
+      # Apple Developer ID certificate and an app-specific password stored as
+      # repository secrets. Until then the build is unsigned and users must
+      # right-click > Open on first launch. Add codesign + notarytool steps
+      # here when those secrets exist.
+      - name: Package binary
+        run: |
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)
+          cd dist
+          zip -r "SSHFerry-${VERSION}-macos.zip" SSHFerry
+          shasum -a 256 "SSHFerry-${VERSION}-macos.zip" \
+            > "SSHFerry-${VERSION}-macos.sha256"
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshferry-macos
+          path: |
+            dist/*.zip
+            dist/*.sha256
           if-no-files-found: error

@@ -1,4 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
+"""Cross-platform PyInstaller spec.
+
+Forward-slash paths are accepted by PyInstaller on Windows, macOS, and
+Linux, so a single spec builds on all three. The Windows icon is only
+applied on Windows; macOS/Linux ignore the .ico.
+"""
+import sys
 
 from PyInstaller.utils.hooks import copy_metadata
 
@@ -10,14 +17,15 @@ hiddenimports = [
     'src.ui.widgets.site_editor',
 ]
 
+icon_file = 'src/ui/assets/app_icon.ico' if sys.platform == 'win32' else None
 
 a = Analysis(
-    ['src\\app\\main.py'],
+    ['src/app/main.py'],
     pathex=['.'],
     binaries=[],
     datas=[
-        ('src\\ui\\assets\\app_icon.png', 'src\\ui\\assets'),
-        ('src\\ui\\assets\\app_icon.ico', 'src\\ui\\assets'),
+        ('src/ui/assets/app_icon.png', 'src/ui/assets'),
+        ('src/ui/assets/app_icon.ico', 'src/ui/assets'),
     ] + copy_metadata('paramiko'),
     hiddenimports=hiddenimports,
     hookspath=[],
@@ -46,5 +54,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='src\\ui\\assets\\app_icon.ico',
+    icon=icon_file,
 )
