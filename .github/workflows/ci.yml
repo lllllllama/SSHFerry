@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python-tests:
+    name: Python tests (coverage gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libegl1 libgl1 libxkbcommon0 libdbus-1-3
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install httpx python-multipart
+      - name: Run pytest with coverage gate
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest tests/ -q
+
+  ruff:
+    name: Lint changed surface
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Ruff check
+        run: ruff check src/ backend/ --output-format=github
+        continue-on-error: true
+
+  frontend-build:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Type-check and build
+        run: npm run build
+
+  e2e-transfers:
+    name: E2E transfers against real sshd
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install transfer-core dependencies
+        run: pip install paramiko scp cryptography
+      - name: Start local sshd on port 2222
+        run: |
+          set -eux
+          sudo apt-get update -q
+          sudo apt-get install -y -q openssh-server
+          WORK="$RUNNER_TEMP/e2e-ssh"
+          mkdir -p "$WORK" "$WORK/remote_root"
+          ssh-keygen -q -t ed25519 -N '' -f "$WORK/host_key"
+          ssh-keygen -q -t ed25519 -N '' -f "$WORK/client_key"
+          mkdir -p ~/.ssh
+          cat "$WORK/client_key.pub" >> ~/.ssh/authorized_keys
+          chmod 700 ~/.ssh
+          chmod 600 ~/.ssh/authorized_keys
+          cat > "$WORK/sshd_config" <<EOF
+          Port 2222
+          ListenAddress 127.0.0.1
+          HostKey $WORK/host_key
+          PubkeyAuthentication yes
+          AuthorizedKeysFile $HOME/.ssh/authorized_keys
+          PasswordAuthentication no
+          UsePAM no
+          Subsystem sftp internal-sftp
+          PidFile $WORK/sshd.pid
+          EOF
+          sudo mkdir -p /run/sshd
+          /usr/sbin/sshd -f "$WORK/sshd_config" -E "$WORK/sshd.log"
+          sleep 1
+          ssh -p 2222 -i "$WORK/client_key" -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null "$USER@127.0.0.1" 'echo ssh_ok'
+      - name: Run E2E transfer checks
+        env:
+          SSHFERRY_E2E_PORT: "2222"
+          SSHFERRY_E2E_KEY: ${{ runner.temp }}/e2e-ssh/client_key
+          SSHFERRY_E2E_REMOTE_ROOT: ${{ runner.temp }}/e2e-ssh/remote_root
+        run: python tools/e2e_transfer_check.py

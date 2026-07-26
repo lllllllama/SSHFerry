@@ -1,0 +1,52 @@
+name: Release build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  windows-package:
+    name: Windows desktop package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Build with existing packaging script
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File ./tools/build_windows.ps1 -Clean -VenvPath .venv_ci
+      # Code signing intentionally not wired up yet: it requires an
+      # organization certificate stored as a repository secret. When one is
+      # available, add a signtool step here before the artifact upload.
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshferry-windows
+          path: |
+            release/*.zip
+            release/*.sha256
+          if-no-files-found: error
+
+  linux-archive:
+    name: Linux source-run archive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create source archive with run scripts
+        run: |
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)
+          mkdir -p release
+          git archive --format=tar.gz \
+            --prefix="SSHFerry-${VERSION}/" \
+            -o "release/SSHFerry-${VERSION}-source.tar.gz" HEAD
+          sha256sum "release/SSHFerry-${VERSION}-source.tar.gz" \
+            > "release/SSHFerry-${VERSION}-source.sha256"
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshferry-source
+          path: release/*
+          if-no-files-found: error
