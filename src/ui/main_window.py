@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -323,6 +324,9 @@ class MainWindow(QMainWindow):
         self.site_list.setObjectName("siteList")
         self.site_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.site_list.itemClicked.connect(self._on_site_selected)
+        # itemClicked only fires for mouse clicks; keep buttons in sync for
+        # keyboard-driven selection changes too.
+        self.site_list.itemSelectionChanged.connect(self._update_site_action_buttons)
         self.site_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.site_list.customContextMenuRequested.connect(self._show_site_context_menu)
         left_lay.addWidget(self.site_list)
@@ -779,7 +783,9 @@ class MainWindow(QMainWindow):
         panel.request_rename.connect(
             lambda entry, new_name, sid=session_id: self._activate_and_run(sid, self._remote_rename, entry, new_name)
         )
-        panel.request_upload.connect(lambda sid=session_id: self._activate_and_run(sid, self._upload_files))
+        panel.request_upload.connect(
+            lambda target_item=None, sid=session_id: self._activate_and_run(sid, self._upload_files, target_item)
+        )
         panel.request_upload_paths.connect(
             lambda paths, item, sid=session_id: self._activate_and_run(sid, self._upload_paths, paths, item)
         )
@@ -868,6 +874,7 @@ class MainWindow(QMainWindow):
                 self,
                 "Password Required",
                 f"Password for {site.username}@{site.host}:",
+                QLineEdit.Password,
             )
             if not ok:
                 return False
@@ -1211,6 +1218,18 @@ class MainWindow(QMainWindow):
         entries = self._prune_nested_remote_entries(entries)
         if not session or not entries:
             return
+        label = entries[0].name if len(entries) == 1 else f"{len(entries)} items"
+        has_dirs = any(entry.is_dir for entry in entries)
+        detail = " (folders are removed recursively)" if has_dirs else ""
+        answer = QMessageBox.question(
+            self,
+            "Delete Remote",
+            f"Delete {label} from {session.site.name}?{detail}",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
         parent_path = get_remote_parent(entries[0].path) if len(entries) == 1 else session.panel.current_path
         parent_path = parent_path or session.panel.current_path
         thread = RemoteDeleteManyThread(session.site, entries)
@@ -1247,8 +1266,8 @@ class MainWindow(QMainWindow):
         thread.op_failed.connect(lambda msg: self._op_error("rename", msg))
         self._start_thread(thread)
 
-    def _upload_files(self, session_id: str):
-        self._upload_paths(session_id, self.local_panel.get_selected_paths())
+    def _upload_files(self, session_id: str, target_item: QTreeWidgetItem = None):
+        self._upload_paths(session_id, self.local_panel.get_selected_paths(), target_item)
 
     def _upload_local_paths_to_active_remote(self, paths: list[str]):
         session = self._current_session()
@@ -1624,7 +1643,31 @@ class MainWindow(QMainWindow):
         self.logger.info(msg)
 
     def closeEvent(self, event):
+        active_tasks = [
+            task for task in self.scheduler.get_all_tasks()
+            if task.status in ("pending", "running", "paused")
+        ]
+        if active_tasks:
+            answer = QMessageBox.question(
+                self,
+                "Transfers In Progress",
+                f"{len(active_tasks)} transfer(s) are still active. Close anyway?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                event.ignore()
+                return
         self._task_timer.stop()
         self.scheduler.stop()
         self._save_sites()
+        # Stop background QThreads before Qt tears the window down; a running
+        # QThread whose object is destroyed aborts the process.
+        for thread in list(self._bg_threads):
+            if isValid(thread) and thread.isRunning():
+                thread.requestInterruption()
+                thread.quit()
+        for thread in list(self._bg_threads):
+            if isValid(thread) and thread.isRunning():
+                thread.wait(3000)
         event.accept()

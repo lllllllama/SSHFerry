@@ -6,7 +6,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QDir, QMimeData, QModelIndex, QSize, Qt, QUrl, Signal, QItemSelectionModel, QSortFilterProxyModel, QTimer
+from PySide6.QtCore import QDir, QMimeData, QModelIndex, QSize, Qt, QThread, QUrl, Signal, QItemSelectionModel, QSortFilterProxyModel, QTimer
 from PySide6.QtGui import QColor, QDrag, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -30,6 +30,28 @@ from PySide6.QtWidgets import (
 
 from src.ui.theme import TOKENS, alpha_hex, mono_font
 from src.ui.widgets.feedback import install_button_feedback
+
+
+class DeletePathsThread(QThread):
+    """Delete files/directories off the GUI thread; big trees can take a while."""
+
+    delete_done = Signal()
+    delete_failed = Signal(str)
+
+    def __init__(self, paths: list[str], parent=None):
+        super().__init__(parent)
+        self._paths = list(paths)
+
+    def run(self):
+        try:
+            for path in self._paths:
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+                elif os.path.exists(path):
+                    os.remove(path)
+            self.delete_done.emit()
+        except Exception as exc:
+            self.delete_failed.emit(str(exc))
 
 
 class MetricsColumnDelegate(QStyledItemDelegate):
@@ -663,15 +685,24 @@ class LocalPanel(QWidget):
         )
         if answer != QMessageBox.Yes:
             return
-        try:
-            for path in paths:
-                if os.path.isdir(path):
-                    shutil.rmtree(path)
-                elif os.path.exists(path):
-                    os.remove(path)
-            self._refresh()
-        except Exception as exc:
-            QMessageBox.critical(self, "Delete Error", str(exc))
+        existing = getattr(self, "_delete_thread", None)
+        if existing is not None and existing.isRunning():
+            QMessageBox.information(self, "Delete", "A delete operation is already in progress.")
+            return
+        thread = DeletePathsThread(paths, self)
+        thread.delete_done.connect(self._on_delete_finished)
+        thread.delete_failed.connect(self._on_delete_failed)
+        self._delete_thread = thread
+        thread.start()
+
+    def _on_delete_finished(self) -> None:
+        self._delete_thread = None
+        self._refresh()
+
+    def _on_delete_failed(self, message: str) -> None:
+        self._delete_thread = None
+        self._refresh()
+        QMessageBox.critical(self, "Delete Error", message)
 
     def _create_folder(self, parent_dir: str) -> None:
         name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")

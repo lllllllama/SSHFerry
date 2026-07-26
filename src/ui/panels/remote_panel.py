@@ -149,7 +149,7 @@ class RemotePanel(QWidget):
     request_delete = Signal(RemoteEntry)
     request_delete_entries = Signal(list)
     request_rename = Signal(RemoteEntry, str)  # entry, new_name
-    request_upload = Signal()  # upload selected local files to current remote dir
+    request_upload = Signal(object)  # upload selected local files; target item or None
     request_upload_paths = Signal(list, object)  # upload specific local paths (from drag-drop), target item
     request_download = Signal(RemoteEntry)
     request_download_paths = Signal(list)  # download remote paths (from drag-drop)
@@ -263,11 +263,15 @@ class RemotePanel(QWidget):
     def reset_view_state(self):
         """Clear visible items and any pending restore state."""
         self._population_generations.clear()
+        self._drag_saved_current_item = None
+        self._drag_saved_selected_items = []
         self.tree.clear()
 
     def set_root_entries(self, entries: list[RemoteEntry], preserve_state: bool = False):
         """Populate the root level of the tree."""
         restore_state = self._capture_restore_state() if preserve_state else None
+        self._drag_saved_current_item = None
+        self._drag_saved_selected_items = []
         self.tree.clear()
         self._start_population(self.tree.invisibleRootItem(), entries, restore_state, scope_key="__root__")
 
@@ -344,6 +348,9 @@ class RemotePanel(QWidget):
         if selected:
             item = selected[0]
             entry = item.data(0, Qt.UserRole)
+            if entry is None:
+                # Placeholder rows ("Loading...", "(empty)") carry no entry.
+                return self.current_path
             if entry.is_dir:
                 return entry.path
             else:
@@ -489,6 +496,7 @@ class RemotePanel(QWidget):
             if not self._restore_cached_children(child, entry.path, restore_state):
                 dummy = QTreeWidgetItem(child)
                 dummy.setText(0, "Loading...")
+                dummy.setDisabled(True)
             child.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
         return child
 
@@ -508,6 +516,7 @@ class RemotePanel(QWidget):
         if state == "loading":
             loading = QTreeWidgetItem(item)
             loading.setText(0, "Loading...")
+            loading.setDisabled(True)
             return True
         if state == "empty":
             empty = QTreeWidgetItem(item)
@@ -562,6 +571,7 @@ class RemotePanel(QWidget):
             item.takeChildren()
             loading = QTreeWidgetItem(item)
             loading.setText(0, "Loading...")
+            loading.setDisabled(True)
             item.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
             item.setData(0, self.ROLE_EMPTY_LOADED, False)
 
@@ -613,7 +623,7 @@ class RemotePanel(QWidget):
         selected = self._prepare_context_selection(target_item)
         
         act_upload = menu.addAction("Upload here...")
-        act_upload.triggered.connect(lambda: self.request_upload.emit())
+        act_upload.triggered.connect(lambda: self.request_upload.emit(target_item))
 
         if selected:
             entry = selected[0]
@@ -779,9 +789,12 @@ class RemotePanel(QWidget):
         self._drag_pulse_on = False
         self.tree.setStyleSheet(self._base_tree_stylesheet)
         self.tree.clearSelection()
+        # The tree may have been repopulated mid-drag; saved items can be
+        # dead C++ objects.
         for item in self._drag_saved_selected_items:
-            item.setSelected(True)
-        if self._drag_saved_current_item:
+            if isValid(item):
+                item.setSelected(True)
+        if self._drag_saved_current_item and isValid(self._drag_saved_current_item):
             self.tree.setCurrentItem(self._drag_saved_current_item)
         self._drag_saved_current_item = None
         self._drag_saved_selected_items = []

@@ -186,8 +186,13 @@ class WindowManager:
 
     def create_window(self):
         """Create and show a new window."""
+        from PySide6.QtCore import Qt
+
         window = self._main_window_cls()
         window.window_manager = self
+        # Without WA_DeleteOnClose a closed window is only hidden: destroyed
+        # never fires and every closed window leaks here.
+        window.setAttribute(Qt.WA_DeleteOnClose, True)
         self.windows.append(window)
         window.destroyed.connect(lambda: self._on_window_destroyed(window))
         window.show()
