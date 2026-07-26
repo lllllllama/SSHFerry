@@ -9,7 +9,6 @@ export interface RemotePaneState {
   sessionId: string;
   siteName: string;
   currentPath: string;
-  pathDraft: string;
   stale: boolean;
 }
 
@@ -35,7 +34,6 @@ interface WorkspaceState {
   setCenterPanelMode: (mode: CenterPanelMode) => void;
   setCenterSessionId: (sessionId: string | null) => void;
   setPanePath: (sessionId: string, path: string) => void;
-  setPanePathDraft: (sessionId: string, path: string) => void;
   setPaneStale: (sessionId: string, stale: boolean) => void;
   setRemoteSelection: (sessionId: string, paths: string[]) => void;
   toggleRemoteSelection: (sessionId: string, path: string, multi: boolean) => void;
@@ -59,7 +57,6 @@ function upsertSessionPane(panes: RemotePaneState[], session: SessionResponse): 
         sessionId: session.session_id,
         siteName: session.site_name,
         currentPath: session.remote_root,
-        pathDraft: session.remote_root,
         stale: false,
       },
     ];
@@ -71,7 +68,6 @@ function upsertSessionPane(panes: RemotePaneState[], session: SessionResponse): 
           ...pane,
           siteName: session.site_name,
           currentPath: pane.currentPath || session.remote_root,
-          pathDraft: pane.pathDraft || pane.currentPath || session.remote_root,
         }
       : pane,
   );
@@ -191,7 +187,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
           ? {
               ...pane,
               currentPath: path,
-              pathDraft: path,
               stale: false,
             }
           : pane,
@@ -200,17 +195,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
         ...state.remoteSelections,
         [sessionId]: [],
       },
-    })),
-  setPanePathDraft: (sessionId, path) =>
-    set((state) => ({
-      panes: state.panes.map((pane) =>
-        pane.sessionId === sessionId
-          ? {
-              ...pane,
-              pathDraft: path,
-            }
-          : pane,
-      ),
     })),
   setPaneStale: (sessionId, stale) =>
     set((state) => ({

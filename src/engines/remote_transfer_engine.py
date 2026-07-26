@@ -628,63 +628,107 @@ class RemoteToRemoteTransferEngine:
                 parallel_slots["active"] = max(0, parallel_slots["active"] - 1)
 
         def worker() -> None:
-            while not stop_state["triggered"]:
-                try:
-                    src_path, dst_path, size = queue.get(timeout=0.1)
-                except Empty:
-                    if queue.empty():
-                        break
-                    continue
-                try:
-                    if check_interrupt and check_interrupt():
+            # One persistent connection pair per worker instead of two SSH
+            # handshakes per file.
+            worker_src: Optional[SftpEngine] = None
+            worker_dst: Optional[SftpEngine] = None
+
+            def get_engines() -> tuple[SftpEngine, SftpEngine]:
+                nonlocal worker_src, worker_dst
+                if worker_src is None:
+                    engine = SftpEngine(self.src_site, self.logger)
+                    engine.connect()
+                    worker_src = engine
+                elif hasattr(worker_src, "is_connected") and not worker_src.is_connected():
+                    worker_src.connect()
+                if worker_dst is None:
+                    engine = SftpEngine(self.dst_site, self.logger)
+                    engine.connect()
+                    worker_dst = engine
+                elif hasattr(worker_dst, "is_connected") and not worker_dst.is_connected():
+                    worker_dst.connect()
+                return worker_src, worker_dst
+
+            def reset_engines() -> None:
+                nonlocal worker_src, worker_dst
+                for engine in (worker_src, worker_dst):
+                    if engine is None:
+                        continue
+                    try:
+                        engine.disconnect()
+                    except Exception:
+                        pass
+                worker_src = None
+                worker_dst = None
+
+            try:
+                while not stop_state["triggered"]:
+                    try:
+                        src_path, dst_path, size = queue.get(timeout=0.1)
+                    except Empty:
+                        if queue.empty():
+                            break
+                        continue
+                    try:
+                        if check_interrupt and check_interrupt():
+                            stop_state["triggered"] = True
+                            # Surface the cancel; a silent return would report
+                            # the transfer as complete.
+                            raise InterruptedError("Task interrupted")
+                        if size >= self.parallel_threshold:
+                            if item_callback:
+                                item_callback("start", os.path.basename(src_path), 1)
+                            acquire_parallel_slot()
+                            try:
+                                self._transfer_file_parallel_bridge(
+                                    src_path,
+                                    dst_path,
+                                    size,
+                                    callback=lambda done, _total, key=src_path: add_progress(key, done),
+                                    check_interrupt=check_interrupt,
+                                )
+                            finally:
+                                release_parallel_slot()
+                            if item_callback:
+                                item_callback("complete", os.path.basename(src_path), 1)
+                        else:
+                            if item_callback:
+                                item_callback("start", os.path.basename(src_path), 1)
+                            attempts = 0
+                            while True:
+                                attempts += 1
+                                try:
+                                    stream_src, stream_dst = get_engines()
+                                    self._stream_file_between_engines(
+                                        stream_src,
+                                        stream_dst,
+                                        src_path,
+                                        dst_path,
+                                        size,
+                                        callback=lambda done, _total, key=src_path: add_progress(key, done),
+                                        check_interrupt=check_interrupt,
+                                    )
+                                    break
+                                except InterruptedError:
+                                    raise
+                                except SSHFerryError:
+                                    # The persistent connections may have
+                                    # dropped; retry once on fresh ones.
+                                    reset_engines()
+                                    if attempts >= 2:
+                                        raise
+                            if item_callback:
+                                item_callback("complete", os.path.basename(src_path), 1)
+                        add_progress(src_path, size)
+                    except Exception as exc:
+                        if not first_error:
+                            first_error.append(exc)
                         stop_state["triggered"] = True
                         return
-                    if size >= self.parallel_threshold:
-                        if item_callback:
-                            item_callback("start", os.path.basename(src_path), 1)
-                        acquire_parallel_slot()
-                        try:
-                            self._transfer_file_parallel_bridge(
-                                src_path,
-                                dst_path,
-                                size,
-                                callback=lambda done, _total, key=src_path: add_progress(key, done),
-                                check_interrupt=check_interrupt,
-                            )
-                        finally:
-                            release_parallel_slot()
-                        if item_callback:
-                            item_callback("complete", os.path.basename(src_path), 1)
-                    else:
-                        if item_callback:
-                            item_callback("start", os.path.basename(src_path), 1)
-                        worker_src = SftpEngine(self.src_site, self.logger)
-                        worker_dst = SftpEngine(self.dst_site, self.logger)
-                        try:
-                            worker_src.connect()
-                            worker_dst.connect()
-                            self._stream_file_between_engines(
-                                worker_src,
-                                worker_dst,
-                                src_path,
-                                dst_path,
-                                size,
-                                callback=lambda done, _total, key=src_path: add_progress(key, done),
-                                check_interrupt=check_interrupt,
-                            )
-                        finally:
-                            worker_dst.disconnect()
-                            worker_src.disconnect()
-                        if item_callback:
-                            item_callback("complete", os.path.basename(src_path), 1)
-                    add_progress(src_path, size)
-                except Exception as exc:
-                    if not first_error:
-                        first_error.append(exc)
-                    stop_state["triggered"] = True
-                    return
-                finally:
-                    queue.task_done()
+                    finally:
+                        queue.task_done()
+            finally:
+                reset_engines()
 
         worker_count = max(1, min(self.folder_file_workers, max(1, len(files))))
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
@@ -840,7 +884,8 @@ class RemoteToRemoteTransferEngine:
         chunk_size = 4 * 1024 * 1024
         bytes_done = max(0, min(offset, total))
         with src_engine.sftp_client.open(src_path, "rb") as src_file:
-            if offset:
+            use_readv = hasattr(src_file, "readv") and total > bytes_done
+            if not use_readv and offset:
                 src_file.seek(offset)
             dst_mode = "wb"
             if offset > 0:
@@ -852,16 +897,35 @@ class RemoteToRemoteTransferEngine:
                     dst_file.seek(offset)
                 if callback and offset > 0:
                     callback(bytes_done, total)
-                while True:
-                    if check_interrupt and check_interrupt():
-                        raise InterruptedError("Task interrupted")
-                    chunk = src_file.read(chunk_size)
-                    if not chunk:
-                        break
-                    dst_file.write(chunk)
-                    bytes_done += len(chunk)
-                    if callback:
-                        callback(min(total, bytes_done), total)
+                if use_readv:
+                    # Pipeline source reads; a plain read() loop costs one
+                    # synchronous round trip per 32 KB request.
+                    block_plan = []
+                    position = bytes_done
+                    while position < total:
+                        block = min(chunk_size, total - position)
+                        block_plan.append((position, block))
+                        position += block
+                    for chunk in src_file.readv(block_plan):
+                        if check_interrupt and check_interrupt():
+                            raise InterruptedError("Task interrupted")
+                        if not chunk:
+                            break
+                        dst_file.write(chunk)
+                        bytes_done += len(chunk)
+                        if callback:
+                            callback(min(total, bytes_done), total)
+                else:
+                    while True:
+                        if check_interrupt and check_interrupt():
+                            raise InterruptedError("Task interrupted")
+                        chunk = src_file.read(chunk_size)
+                        if not chunk:
+                            break
+                        dst_file.write(chunk)
+                        bytes_done += len(chunk)
+                        if callback:
+                            callback(min(total, bytes_done), total)
 
     def _transfer_file_dualpath(
         self,
@@ -1225,21 +1289,40 @@ class RemoteToRemoteTransferEngine:
         remaining = expected_length
         transferred = 0
         with src_engine.sftp_client.open(src_path, "rb") as src_file:
-            src_file.seek(offset)
             with dst_engine.sftp_client.open(dst_part_path, "wb") as dst_file:
                 if hasattr(dst_file, "set_pipelined"):
                     dst_file.set_pipelined(True)
-                while remaining > 0:
-                    if check_interrupt and check_interrupt():
-                        raise InterruptedError("Task interrupted")
-                    data = src_file.read(min(4 * 1024 * 1024, remaining))
-                    if not data:
-                        break
-                    dst_file.write(data)
-                    transferred += len(data)
-                    remaining -= len(data)
-                    if progress:
-                        progress(transferred)
+                if hasattr(src_file, "readv"):
+                    # Pipeline the bounded [offset, offset+length) read.
+                    block_plan = []
+                    position = offset
+                    while position < offset + expected_length:
+                        block = min(4 * 1024 * 1024, offset + expected_length - position)
+                        block_plan.append((position, block))
+                        position += block
+                    for data in src_file.readv(block_plan):
+                        if check_interrupt and check_interrupt():
+                            raise InterruptedError("Task interrupted")
+                        if not data:
+                            break
+                        dst_file.write(data)
+                        transferred += len(data)
+                        remaining -= len(data)
+                        if progress:
+                            progress(transferred)
+                else:
+                    src_file.seek(offset)
+                    while remaining > 0:
+                        if check_interrupt and check_interrupt():
+                            raise InterruptedError("Task interrupted")
+                        data = src_file.read(min(4 * 1024 * 1024, remaining))
+                        if not data:
+                            break
+                        dst_file.write(data)
+                        transferred += len(data)
+                        remaining -= len(data)
+                        if progress:
+                            progress(transferred)
         if transferred != expected_length:
             raise SSHFerryError(
                 ErrorCode.TRANSFER_FAILED,
@@ -1258,6 +1341,11 @@ class RemoteToRemoteTransferEngine:
                 merged.set_pipelined(True)
             for index in sorted(winner_paths):
                 with dst_engine.sftp_client.open(winner_paths[index], "rb") as part_file:
+                    if hasattr(part_file, "prefetch"):
+                        try:
+                            part_file.prefetch()
+                        except Exception:
+                            pass
                     while True:
                         data = part_file.read(4 * 1024 * 1024)
                         if not data:
@@ -1356,8 +1444,13 @@ class RemoteToRemoteTransferEngine:
                                 if check_interrupt and check_interrupt():
                                     interrupt_event.set()
                                     return
-                                src_file.seek(offset)
-                                data = src_file.read(length)
+                                if hasattr(src_file, "readv"):
+                                    # readv pipelines the chunk's 32 KB requests
+                                    # instead of issuing them one at a time.
+                                    data = b"".join(src_file.readv([(offset, length)]))
+                                else:
+                                    src_file.seek(offset)
+                                    data = src_file.read(length)
                                 if len(data) != length:
                                     raise IOError(
                                         f"Remote chunk read size mismatch at offset {offset}: expected {length}, got {len(data)}"

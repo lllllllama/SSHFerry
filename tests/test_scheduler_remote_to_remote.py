@@ -722,6 +722,7 @@ def test_remote_to_remote_bridge_uses_parallel_workers_for_large_file():
         src_data = b"x" * 64
         src_file = MagicMock()
         src_file.read.side_effect = [src_data, b""]
+        src_file.readv.side_effect = lambda _chunks: iter([src_data])
         src_worker.sftp_client.open.return_value.__enter__.return_value = src_file
 
         dst_worker_file = MagicMock()
@@ -740,7 +741,7 @@ def test_remote_to_remote_bridge_uses_parallel_workers_for_large_file():
         )
         engine._transfer_file_parallel_bridge("/data/a.bin", "/data/b.bin", 64)
 
-    src_file.seek.assert_called_with(0)
+    src_file.readv.assert_called_once_with([(0, 64)])
     dst_worker_file.seek.assert_called_with(0)
     dst_worker_file.write.assert_called_once_with(src_data)
     assert mock_parallel_cls.call_count == 2
@@ -774,6 +775,7 @@ def test_remote_to_remote_dir_relay_parallelizes_large_child_file():
 
         src_file = MagicMock()
         src_file.read.side_effect = [b"12345678", b""]
+        src_file.readv.side_effect = lambda _chunks: iter([b"12345678"])
         small_src.sftp_client.open.return_value.__enter__.return_value = src_file
         dst_file = MagicMock()
         small_dst.sftp_client.open.return_value.__enter__.return_value = dst_file

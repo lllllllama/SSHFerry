@@ -75,8 +75,10 @@ class ParallelSftpEngine:
         self.max_workers = max_workers if max_workers is not None else preset.workers
         self.chunk_size = chunk_size if chunk_size is not None else preset.chunk_size
         self.min_workers = 1
-        self.initial_workers = 1
-        self.worker_ramp_step = 1
+        # Ramp 4-at-a-time from 4 so full parallelism arrives in ~1s instead
+        # of ~4.5s, while still backing off on early connect failures.
+        self.initial_workers = min(4, self.max_workers)
+        self.worker_ramp_step = 4
         self.warmup_delay_seconds = 0.3
         self.connect_retries = 3
         self.connect_backoff_seconds = 0.4

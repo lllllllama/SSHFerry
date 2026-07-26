@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 
+import { getErrorMessage } from '../../api/http';
 import { cancelTask, clearFinishedTasks, pauseTask, restartTask, resumeTask } from '../../api/tasks';
 import type { TaskItem } from '../../api/types';
 import { useI18n } from '../../i18n';
@@ -144,6 +145,26 @@ export function TaskCenter({ fullPage = false }: TaskCenterProps) {
     });
   }
 
+  async function runRowAction(action: 'pause' | 'resume' | 'cancel' | 'restart', taskId: string) {
+    const mutation =
+      action === 'pause'
+        ? pauseMutation
+        : action === 'resume'
+          ? resumeMutation
+          : action === 'cancel'
+            ? cancelMutation
+            : restartMutation;
+    try {
+      await mutation.mutateAsync(taskId);
+    } catch (error) {
+      pushToast({
+        tone: 'danger',
+        title: t('taskCenter.toast.actionFailed', { action: t(`task.action.${action}`) }),
+        message: getErrorMessage(error),
+      });
+    }
+  }
+
   return (
     <section className={`panel-shell task-center ${fullPage ? 'task-center-full' : ''}`}>
       <header className="panel-header">
@@ -191,10 +212,19 @@ export function TaskCenter({ fullPage = false }: TaskCenterProps) {
             type="button"
             className="ghost-button"
             onClick={() => {
-              void clearFinishedMutation.mutateAsync().then(() => {
-                clearClientFinished();
-                pushToast({ tone: 'success', title: t('taskCenter.toast.clearedFinished') });
-              });
+              void clearFinishedMutation
+                .mutateAsync()
+                .then(() => {
+                  clearClientFinished();
+                  pushToast({ tone: 'success', title: t('taskCenter.toast.clearedFinished') });
+                })
+                .catch((error: unknown) => {
+                  pushToast({
+                    tone: 'danger',
+                    title: t('taskCenter.toast.clearFailed'),
+                    message: getErrorMessage(error),
+                  });
+                });
             }}
           >
             {t('taskCenter.clearFinished')}
@@ -276,18 +306,26 @@ export function TaskCenter({ fullPage = false }: TaskCenterProps) {
                         ) : null
                       ) : (
                         <>
-                          <button type="button" className="row-action" onClick={() => void pauseMutation.mutateAsync(task.task_id)}>
-                            {t('task.action.pause')}
-                          </button>
-                          <button type="button" className="row-action" onClick={() => void resumeMutation.mutateAsync(task.task_id)}>
-                            {t('task.action.resume')}
-                          </button>
-                          <button type="button" className="row-action" onClick={() => void cancelMutation.mutateAsync(task.task_id)}>
-                            {t('task.action.cancel')}
-                          </button>
-                          <button type="button" className="row-action" onClick={() => void restartMutation.mutateAsync(task.task_id)}>
-                            {t('task.action.restart')}
-                          </button>
+                          {task.status === 'running' ? (
+                            <button type="button" className="row-action" onClick={() => void runRowAction('pause', task.task_id)}>
+                              {t('task.action.pause')}
+                            </button>
+                          ) : null}
+                          {task.status === 'paused' ? (
+                            <button type="button" className="row-action" onClick={() => void runRowAction('resume', task.task_id)}>
+                              {t('task.action.resume')}
+                            </button>
+                          ) : null}
+                          {!task.is_finished ? (
+                            <button type="button" className="row-action" onClick={() => void runRowAction('cancel', task.task_id)}>
+                              {t('task.action.cancel')}
+                            </button>
+                          ) : null}
+                          {task.status === 'failed' || task.status === 'canceled' ? (
+                            <button type="button" className="row-action" onClick={() => void runRowAction('restart', task.task_id)}>
+                              {t('task.action.restart')}
+                            </button>
+                          ) : null}
                         </>
                       )}
                     </div>

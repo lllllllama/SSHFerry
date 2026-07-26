@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { listTasks } from '../api/tasks';
+import type { TaskItem } from '../api/types';
 import { getTaskSocketUrl, parseTaskSocketMessage } from '../api/ws';
 import { translate } from '../i18n';
 import { useAuthStore } from '../store/auth';
@@ -12,6 +14,7 @@ const RECONNECT_DELAY_MS = 2200;
 const MAX_RECONNECT_BEFORE_POLLING = 3;
 
 export function useTaskSocket() {
+  const queryClient = useQueryClient();
   const authReady = useAuthStore((state) => state.status === 'authenticated');
   const setRemoteSnapshot = useTasksStore((state) => state.setRemoteSnapshot);
   const setSocketStatus = useTasksStore((state) => state.setSocketStatus);
@@ -28,11 +31,27 @@ export function useTaskSocket() {
     let pollTimer: number | null = null;
     let reconnectAttempts = 0;
     let disposed = false;
+    let unfinishedTaskIds = new Set<string>();
+
+    const applySnapshot = (items: TaskItem[], total: number) => {
+      const hasNewlyFinishedTask = items.some(
+        (task) => task.is_finished && unfinishedTaskIds.has(task.task_id),
+      );
+      unfinishedTaskIds = new Set(items.filter((task) => !task.is_finished).map((task) => task.task_id));
+      setRemoteSnapshot(items, total);
+      if (hasNewlyFinishedTask) {
+        // Transfers change directory contents; refresh remote and workspace listings.
+        void queryClient.invalidateQueries({ queryKey: ['remote-list'] });
+        void queryClient.invalidateQueries({ queryKey: ['workspace-list'] });
+        void queryClient.invalidateQueries({ queryKey: ['workspace-stat'] });
+        void queryClient.invalidateQueries({ queryKey: ['local-files-list'] });
+      }
+    };
 
     const pollTasks = async () => {
       try {
         const snapshot = await listTasks();
-        setRemoteSnapshot(snapshot.items, snapshot.total);
+        applySnapshot(snapshot.items, snapshot.total);
       } catch (error) {
         setSocketError(error instanceof Error ? error.message : translate('socket.pollFailed'));
       }
@@ -77,7 +96,7 @@ export function useTaskSocket() {
         }
 
         if (payload.type === 'task_snapshot') {
-          setRemoteSnapshot(payload.items, payload.total);
+          applySnapshot(payload.items, payload.total);
           return;
         }
 
@@ -118,5 +137,5 @@ export function useTaskSocket() {
       }
       setSocketStatus('idle');
     };
-  }, [authReady, pushToast, setRemoteSnapshot, setSocketError, setSocketStatus]);
+  }, [authReady, pushToast, queryClient, setRemoteSnapshot, setSocketError, setSocketStatus]);
 }

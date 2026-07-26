@@ -1,6 +1,5 @@
-﻿import { useState } from 'react';
+﻿import { useMemo, useRef, useState } from 'react';
 
-import { useRef } from 'react';
 import type { TransferDragPayload } from '../../api/types';
 import { getTransferDragMime } from '../../api/ws';
 import { useI18n } from '../../i18n';
@@ -55,8 +54,7 @@ function buildHighlightTerms(query: string | undefined): string[] {
     .sort((left, right) => right.length - left.length);
 }
 
-function renderHighlightedName(name: string, query: string | undefined) {
-  const terms = buildHighlightTerms(query);
+function renderHighlightedName(name: string, terms: string[]) {
   if (!terms.length) {
     return name;
   }
@@ -123,6 +121,8 @@ export function FileTable<T extends FileLike>(props: FileTableProps<T>) {
   const shellRef = useRef<HTMLDivElement | null>(null);
   const [hoveredPath, setHoveredPath] = useState<string | null>(null);
   const [selectionAnchorPath, setSelectionAnchorPath] = useState<string | null>(null);
+  const selectedSet = useMemo(() => new Set(selectedPaths), [selectedPaths]);
+  const highlightTerms = useMemo(() => buildHighlightTerms(highlightQuery), [highlightQuery]);
   const { formatDateTime, t } = useI18n();
 
   function handleRowClick(entry: T, event: React.MouseEvent<HTMLTableRowElement>) {
@@ -215,7 +215,7 @@ export function FileTable<T extends FileLike>(props: FileTableProps<T>) {
             </tr>
           ) : null}
           {entries.map((entry) => {
-            const selected = selectedPaths.includes(entry.path);
+            const selected = selectedSet.has(entry.path);
             const rowDrop = entry.is_dir && onDropTransfer;
             const subtitle = getEntrySubtitle?.(entry);
             return (
@@ -266,7 +266,7 @@ export function FileTable<T extends FileLike>(props: FileTableProps<T>) {
                   <span className={`entry-icon ${entry.is_dir ? 'entry-dir' : 'entry-file'}`} />
                   <span className="entry-copy">
                     <span className={`entry-name ${entry.is_dir ? 'entry-name-dir' : ''}`}>
-                      {renderHighlightedName(entry.name, highlightQuery)}
+                      {renderHighlightedName(entry.name, highlightTerms)}
                     </span>
                     {subtitle ? <span className="entry-subtitle">{subtitle}</span> : null}
                   </span>

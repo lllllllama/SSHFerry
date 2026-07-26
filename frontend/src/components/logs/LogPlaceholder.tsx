@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 
+import { getErrorMessage } from '../../api/http';
 import { clearLogs } from '../../api/logs';
 import { useI18n } from '../../i18n';
 import { useLogsStore } from '../../store/logs';
@@ -82,9 +83,18 @@ export function LogPlaceholder({ fullPage = false }: LogPlaceholderProps) {
             className="ghost-button"
             disabled={!total || clearMutation.isPending}
             onClick={() => {
-              void clearMutation.mutateAsync().then(() => {
-                pushToast({ tone: 'success', title: t('log.cleared') });
-              });
+              void clearMutation
+                .mutateAsync()
+                .then(() => {
+                  pushToast({ tone: 'success', title: t('log.cleared') });
+                })
+                .catch((error: unknown) => {
+                  pushToast({
+                    tone: 'danger',
+                    title: t('log.clearFailed'),
+                    message: getErrorMessage(error),
+                  });
+                });
             }}
           >
             {clearMutation.isPending ? t('common.processing') : t('log.clear')}

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 
+import { getErrorMessage } from '../../api/http';
 import { useI18n } from '../../i18n';
 import { useUiStore } from '../../store/ui';
 import { Modal } from './Modal';
@@ -7,6 +8,7 @@ import { Modal } from './Modal';
 export function ConfirmDialog() {
   const confirm = useUiStore((state) => state.confirm);
   const closeConfirm = useUiStore((state) => state.closeConfirm);
+  const pushToast = useUiStore((state) => state.pushToast);
   const [submitting, setSubmitting] = useState(false);
   const { t } = useI18n();
 
@@ -19,6 +21,12 @@ export function ConfirmDialog() {
     try {
       await confirm.onConfirm();
       closeConfirm();
+    } catch (error) {
+      pushToast({
+        tone: 'danger',
+        title: t('common.operationFailed'),
+        message: getErrorMessage(error),
+      });
     } finally {
       setSubmitting(false);
     }

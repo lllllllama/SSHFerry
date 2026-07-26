@@ -18,6 +18,7 @@ import { useTasksStore } from '../../store/tasks';
 import { useUiStore } from '../../store/ui';
 import { useWorkspaceStore } from '../../store/workspace';
 import { formatBytes } from '../../utils/format';
+import { StatusBadge } from '../common/StatusBadge';
 import { FileTable } from './FileTable';
 
 interface LocalPanelProps {
@@ -174,6 +175,7 @@ export function LocalPanel({ onQueueDownloads }: LocalPanelProps) {
     queryKey: [isDirectLocalMode ? 'local-files-list' : 'workspace-list', currentPath],
     queryFn: () => (isDirectLocalMode ? listLocalFiles(currentPath) : listWorkspaceItems(currentPath)),
     enabled: isDirectLocalMode ? Boolean(currentPath.trim()) : true,
+    placeholderData: (previousData) => previousData,
   });
 
   const localSearchQuery = debouncedLocalSearchText.trim();
@@ -220,13 +222,13 @@ export function LocalPanel({ onQueueDownloads }: LocalPanelProps) {
   }, [localSearchText]);
 
   useEffect(() => {
-    if (!listingQuery.data) {
+    if (!listingQuery.data || listingQuery.isPlaceholderData || listingQuery.isFetching) {
       return;
     }
     if (listingQuery.data.current_path !== currentPath) {
       setLocalPath(listingQuery.data.current_path);
     }
-  }, [currentPath, listingQuery.data, setLocalPath]);
+  }, [currentPath, listingQuery.data, listingQuery.isFetching, listingQuery.isPlaceholderData, setLocalPath]);
 
   async function refreshWorkspace() {
     await Promise.all([
@@ -443,6 +445,9 @@ export function LocalPanel({ onQueueDownloads }: LocalPanelProps) {
           {summary ? <p className="mono-cell">{summary}</p> : null}
         </div>
         <div className="local-panel-actions">
+          <StatusBadge tone={listingQuery.isFetching ? 'warning' : 'success'}>
+            {listingQuery.isFetching ? t('common.loading') : t('common.ready')}
+          </StatusBadge>
           <button
             type="button"
             className="ghost-button local-panel-nav-button"

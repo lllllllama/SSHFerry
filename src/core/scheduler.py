@@ -244,12 +244,18 @@ class TaskScheduler:
                 return False
             if task.status == "pending":
                 self._set_task_status_locked(task, "canceled")
+                task.paused = False
                 return True
             if task.status == "running":
                 task.interrupted = True
+                task.paused = False
                 return True
             if task.status == "paused":
                 self._set_task_status_locked(task, "canceled")
+                # Straggler engine threads may still be mid-flight; make sure
+                # they observe the cancel instead of re-pausing.
+                task.interrupted = True
+                task.paused = False
                 return True
         return False
 
@@ -268,6 +274,7 @@ class TaskScheduler:
                 return False
             self._set_task_status_locked(task, "pending")
             task.paused = False
+            task.interrupted = False
             task.speed = 0.0
             task.avg_speed = 0.0
             task.speed_samples.clear()
@@ -434,6 +441,10 @@ class TaskScheduler:
 
     def _execute_task(self, task: Task):
         with self.task_lock:
+            if task.status != "pending":
+                # Canceled (or otherwise finalized) between dequeue and
+                # dispatch; do not resurrect it to running.
+                return
             self._set_task_status_locked(task, "running")
             task.start_time = time.time()
             task.speed = 0.0
@@ -659,9 +670,14 @@ class TaskScheduler:
 
     def _interrupt_checker(self, task: Task):
         def check_interrupt():
+            if task.interrupted:
+                return True
             if task.paused:
                 with self.task_lock:
-                    task.status = "paused"
+                    # Only a running task may move to paused here; a straggler
+                    # thread must not flip a canceled/finished task back.
+                    if task.status == "running":
+                        self._set_task_status_locked(task, "paused")
                 raise InterruptedError("Task paused")
             return task.interrupted
 
@@ -669,10 +685,12 @@ class TaskScheduler:
 
     def _handle_interrupted(self, task: Task) -> None:
         with self.task_lock:
-            interruption_reason = "paused" if task.paused else "canceled"
-            if task.paused:
+            # An explicit cancel wins over a pause observed at the same time.
+            interruption_reason = "canceled" if task.interrupted else ("paused" if task.paused else "canceled")
+            if interruption_reason == "paused":
                 self._set_task_status_locked(task, "paused")
             else:
+                task.paused = False
                 self._set_task_status_locked(task, "canceled")
             task.end_time = time.time()
             task.avg_speed = self._finalize_task_speed_locked(task)
@@ -1482,6 +1500,15 @@ class TaskScheduler:
                     bundle_key,
                     exc.message,
                 )
+                # Roll back the failed bundle's partial progress so the
+                # per-file fallback does not double-count its bytes.
+                with progress_lock:
+                    previous = transferred.pop(bundle_key, 0)
+                    if previous:
+                        aggregate_done["bytes"] = max(0, aggregate_done["bytes"] - previous)
+                    current_done = aggregate_done["bytes"]
+                if previous:
+                    progress_updater(current_done, task.bytes_total, force=True)
                 self._run_local_folder_transfer_workers(
                     task,
                     [item["tuple"] for item in batch["files"]],
@@ -1521,7 +1548,8 @@ class TaskScheduler:
                 inspector.connect()
         try:
             for item in files:
-                check_interrupt()
+                if check_interrupt():
+                    raise InterruptedError("Task interrupted")
                 if direction == "upload":
                     skip_file, offset = self._inspect_upload_target_state(inspector, str(item["dst"]), int(item["size"]))
                 else:
@@ -1616,6 +1644,12 @@ class TaskScheduler:
                 task.subtask_done += 1
                 task.current_file = label
 
+        worker_count = max(1, min(self.folder_file_workers, max(1, len(files))))
+        # paramiko's SFTPClient is not thread-safe: sharing the bootstrap
+        # engine across concurrent workers (even for stat probes) can deadlock.
+        # Only a single worker may reuse it.
+        inspection_engine = probe_engine if worker_count == 1 else None
+
         def worker() -> None:
             # One persistent connection per worker instead of one SSH
             # handshake per file.
@@ -1653,7 +1687,9 @@ class TaskScheduler:
                     try:
                         if check_interrupt():
                             stop_state["triggered"] = True
-                            return
+                            # Surface the cancel; a silent return would let the
+                            # task complete as "done" at 100%.
+                            raise InterruptedError("Task interrupted")
                         attempts = 0
                         while True:
                             attempts += 1
@@ -1670,7 +1706,7 @@ class TaskScheduler:
                                         mark_complete,
                                         acquire_parallel_slot,
                                         release_parallel_slot,
-                                        probe_engine=probe_engine,
+                                        probe_engine=inspection_engine,
                                         engine_provider=get_engine,
                                     )
                                 else:
@@ -1706,7 +1742,6 @@ class TaskScheduler:
             finally:
                 reset_engine()
 
-        worker_count = max(1, min(self.folder_file_workers, max(1, len(files))))
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
             futures = [executor.submit(worker) for _ in range(worker_count)]
             wait(futures)
@@ -1912,9 +1947,11 @@ class TaskScheduler:
                 local_archive = temp_file.name
             with tarfile.open(local_archive, "w") as archive:
                 for item in files:
-                    check_interrupt()
+                    if check_interrupt():
+                        raise InterruptedError("Task interrupted")
                     archive.add(str(item["src"]), arcname=str(item["rel_path"]))
-                    check_interrupt()
+                if check_interrupt():
+                    raise InterruptedError("Task interrupted")
             archive_size = max(1, os.path.getsize(local_archive))
             total_bytes = max(0, sum(int(item["size"]) for item in files))
             engine = engine if self._can_reuse_bundle_engine(engine) else SftpEngine(site, self.logger)
@@ -2024,10 +2061,33 @@ class TaskScheduler:
                 if should_disconnect:
                     engine.disconnect()
             with tarfile.open(local_archive, "r") as archive:
-                archive.extractall(to_local_fs_path(local_dir))
+                self._extract_bundle_archive(archive, to_local_fs_path(local_dir))
         finally:
             if local_archive and os.path.exists(local_archive):
                 os.remove(local_archive)
+
+    @staticmethod
+    def _extract_bundle_archive(archive: tarfile.TarFile, destination: str) -> None:
+        """Extract a remote-produced tar, refusing path-traversal members."""
+        try:
+            archive.extractall(destination, filter="data")
+        except TypeError:
+            # Python < 3.11.4 has no extraction filter; validate manually.
+            members = []
+            for member in archive.getmembers():
+                name = member.name
+                if name.startswith(("/", "\\")) or ".." in PurePosixPath(name).parts:
+                    raise SSHFerryError(
+                        ErrorCode.TRANSFER_FAILED,
+                        f"Unsafe path in bundle archive: {name}",
+                    )
+                if member.issym() or member.islnk():
+                    raise SSHFerryError(
+                        ErrorCode.TRANSFER_FAILED,
+                        f"Link member not allowed in bundle archive: {name}",
+                    )
+                members.append(member)
+            archive.extractall(destination, members=members)
 
     @staticmethod
     def _can_reuse_bundle_engine(engine: Optional[SftpEngine]) -> bool:

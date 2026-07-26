@@ -69,7 +69,17 @@ class ScpEngine:
                     ErrorCode.UNKNOWN_ERROR,
                     "scp dependency missing. Install with: pip install scp",
                 )
-            self.scp_client = SCPClient(self.ssh_client.get_transport())
+            buff_size = 1024 * 1024
+            try:
+                buff_size = max(64 * 1024, int(os.getenv("SSHFERRY_SCP_BUFF_BYTES", "") or buff_size))
+            except ValueError:
+                pass
+            try:
+                # The 16 KB default causes small socket writes and a progress
+                # callback per 16 KB.
+                self.scp_client = SCPClient(self.ssh_client.get_transport(), buff_size=buff_size)
+            except TypeError:
+                self.scp_client = SCPClient(self.ssh_client.get_transport())
             self._connected = True
             self.logger.info(f"SCP connected to {self.site_config.host}:{self.site_config.port}")
         except paramiko.AuthenticationException as e:

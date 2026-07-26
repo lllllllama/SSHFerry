@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ApiError, getErrorMessage } from '../../api/http';
@@ -41,12 +41,12 @@ export function RemotePane({
   const activePaneId = useWorkspaceStore((state) => state.activePaneId);
   const setActivePane = useWorkspaceStore((state) => state.setActivePane);
   const setPanePath = useWorkspaceStore((state) => state.setPanePath);
-  const setPanePathDraft = useWorkspaceStore((state) => state.setPanePathDraft);
   const setPaneStale = useWorkspaceStore((state) => state.setPaneStale);
   const setRemoteSelection = useWorkspaceStore((state) => state.setRemoteSelection);
   const toggleRemoteSelection = useWorkspaceStore((state) => state.toggleRemoteSelection);
   const openConfirm = useUiStore((state) => state.openConfirm);
   const pushToast = useUiStore((state) => state.pushToast);
+  const [pathDraft, setPathDraft] = useState(pane.currentPath);
   const { t } = useI18n();
 
   const listingQuery = useQuery({
@@ -70,13 +70,24 @@ export function RemotePane({
   const firstSelectedEntry = selectedEntries[0] ?? null;
 
   useEffect(() => {
-    if (!listingQuery.data) {
+    setPathDraft(pane.currentPath);
+  }, [pane.currentPath]);
+
+  useEffect(() => {
+    if (!listingQuery.data || listingQuery.isPlaceholderData || listingQuery.isFetching) {
       return;
     }
     if (listingQuery.data.current_path !== pane.currentPath) {
       setPanePath(pane.sessionId, listingQuery.data.current_path);
     }
-  }, [listingQuery.data, pane.currentPath, pane.sessionId, setPanePath]);
+  }, [
+    listingQuery.data,
+    listingQuery.isFetching,
+    listingQuery.isPlaceholderData,
+    pane.currentPath,
+    pane.sessionId,
+    setPanePath,
+  ]);
 
   useEffect(() => {
     if (!(listingQuery.error instanceof ApiError)) {
@@ -168,10 +179,19 @@ export function RemotePane({
               if (!name) {
                 return;
               }
-              void mkdirMutation.mutateAsync({ path: joinRemotePath(pane.currentPath, name) }).then(() => {
-                pushToast({ tone: 'success', title: t('remotePane.createDirectoryToast') });
-                void refreshListing();
-              });
+              void mkdirMutation
+                .mutateAsync({ path: joinRemotePath(pane.currentPath, name) })
+                .then(() => {
+                  pushToast({ tone: 'success', title: t('remotePane.createDirectoryToast') });
+                  void refreshListing();
+                })
+                .catch((error: unknown) => {
+                  pushToast({
+                    tone: 'danger',
+                    title: t('remotePane.createDirectoryFailed'),
+                    message: getErrorMessage(error),
+                  });
+                });
             }}
           >
             {t('common.add')}
@@ -184,11 +204,11 @@ export function RemotePane({
 
       <div className="path-bar">
         <input
-          value={pane.pathDraft}
-          onChange={(event) => setPanePathDraft(pane.sessionId, event.target.value)}
+          value={pathDraft}
+          onChange={(event) => setPathDraft(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === 'Enter' && pane.pathDraft.trim()) {
-              setPanePath(pane.sessionId, pane.pathDraft.trim());
+            if (event.key === 'Enter' && pathDraft.trim()) {
+              setPanePath(pane.sessionId, pathDraft.trim());
             }
           }}
           placeholder={t('remotePane.pathPlaceholder')}
@@ -233,6 +253,13 @@ export function RemotePane({
               .then(() => {
                 pushToast({ tone: 'success', title: t('remotePane.renameToast') });
                 void refreshListing();
+              })
+              .catch((error: unknown) => {
+                pushToast({
+                  tone: 'danger',
+                  title: t('remotePane.renameFailed'),
+                  message: getErrorMessage(error),
+                });
               });
           }}
         >

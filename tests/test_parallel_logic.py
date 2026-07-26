@@ -29,14 +29,16 @@ class MockFileHandle:
         return data[self.pos:self.pos+size]
 
     def write(self, data):
+        # The whole read-modify-write must be atomic: concurrent workers
+        # write disjoint offsets of the same path.
         with store_lock:
             mock_write_sizes.setdefault(self.path, []).append(len(data))
-        existing = bytearray(self.store.get(self.path, b''))
-        end_pos = self.pos + len(data)
-        if len(existing) < end_pos:
-            existing.extend(b'\0' * (end_pos - len(existing)))
-        existing[self.pos:end_pos] = data
-        self.store[self.path] = bytes(existing)
+            existing = bytearray(self.store.get(self.path, b''))
+            end_pos = self.pos + len(data)
+            if len(existing) < end_pos:
+                existing.extend(b'\0' * (end_pos - len(existing)))
+            existing[self.pos:end_pos] = data
+            self.store[self.path] = bytes(existing)
         self.pos += len(data)
         
     def truncate(self, size):

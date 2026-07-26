@@ -1,7 +1,7 @@
 import { useEffect, useState, type MouseEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { getErrorMessage } from '../../api/http';
+import { ApiError, getErrorMessage } from '../../api/http';
 import { checkConnection, closeSession, listSessions, openSession } from '../../api/sessions';
 import { deleteSites, listSites } from '../../api/sites';
 import type { ConnectionCheckResult, SiteResponse } from '../../api/types';
@@ -92,38 +92,70 @@ export function SiteSidebar() {
   }
 
   async function handleCheck(site: SiteResponse, payload?: { password?: string; keyPassphrase?: string }) {
-    const result = await checkConnectionMutation.mutateAsync({
-      site_name: site.name,
-      password: payload?.password || null,
-      key_passphrase: payload?.keyPassphrase || null,
-    });
-    setConnectionResult(result.results);
-    pushToast({
-      tone: result.all_passed ? 'success' : 'warning',
-      title: t('siteSidebar.toast.checkComplete', { siteName: site.name }),
-    });
+    try {
+      const result = await checkConnectionMutation.mutateAsync({
+        site_name: site.name,
+        password: payload?.password || null,
+        key_passphrase: payload?.keyPassphrase || null,
+      });
+      setConnectionResult(result.results);
+      pushToast({
+        tone: result.all_passed ? 'success' : 'warning',
+        title: t('siteSidebar.toast.checkComplete', { siteName: site.name }),
+      });
+      return true;
+    } catch (error) {
+      pushToast({
+        tone: 'danger',
+        title: t('siteSidebar.toast.checkFailed', { siteName: site.name }),
+        message: getErrorMessage(error),
+      });
+      return false;
+    }
   }
 
   async function handleOpenSession(site: SiteResponse, payload?: { password?: string; keyPassphrase?: string }) {
-    const session = await openSessionMutation.mutateAsync({
-      site_name: site.name,
-      password: payload?.password || null,
-      key_passphrase: payload?.keyPassphrase || null,
-    });
-    useWorkspaceStore.getState().upsertPane(session);
-    await queryClient.invalidateQueries({ queryKey: ['sessions'] });
-    pushToast({
-      tone: 'success',
-      title: t('siteSidebar.toast.sessionOpened'),
-      message: t('siteSidebar.toast.sessionOpenedMessage', {
-        siteName: session.site_name,
-        sessionId: shortId(session.session_id),
-      }),
-    });
+    try {
+      const session = await openSessionMutation.mutateAsync({
+        site_name: site.name,
+        password: payload?.password || null,
+        key_passphrase: payload?.keyPassphrase || null,
+      });
+      useWorkspaceStore.getState().upsertPane(session);
+      await queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      pushToast({
+        tone: 'success',
+        title: t('siteSidebar.toast.sessionOpened'),
+        message: t('siteSidebar.toast.sessionOpenedMessage', {
+          siteName: session.site_name,
+          sessionId: shortId(session.session_id),
+        }),
+      });
+      return true;
+    } catch (error) {
+      pushToast({
+        tone: 'danger',
+        title: t('siteSidebar.toast.sessionOpenFailed'),
+        message: getErrorMessage(error),
+      });
+      return false;
+    }
   }
 
   async function closeSingleSession(sessionId: string) {
-    await closeSessionMutation.mutateAsync({ session_id: sessionId });
+    try {
+      await closeSessionMutation.mutateAsync({ session_id: sessionId });
+    } catch (error) {
+      if (!(error instanceof ApiError && error.status === 404)) {
+        pushToast({
+          tone: 'danger',
+          title: t('siteSidebar.toast.sessionCloseFailed'),
+          message: getErrorMessage(error),
+        });
+        return;
+      }
+      // 404 means the backend no longer knows this session; treat it as already closed.
+    }
     closePane(sessionId);
     await queryClient.invalidateQueries({ queryKey: ['sessions'] });
     pushToast({ tone: 'success', title: t('siteSidebar.toast.sessionClosed') });
@@ -218,12 +250,12 @@ export function SiteSidebar() {
     if (!secretRequest) {
       return;
     }
-    if (secretRequest.mode === 'check') {
-      await handleCheck(secretRequest.site, payload);
-    } else {
-      await handleOpenSession(secretRequest.site, payload);
+    const succeeded = secretRequest.mode === 'check'
+      ? await handleCheck(secretRequest.site, payload)
+      : await handleOpenSession(secretRequest.site, payload);
+    if (succeeded) {
+      setSecretRequest(null);
     }
-    setSecretRequest(null);
   }
 
   return (

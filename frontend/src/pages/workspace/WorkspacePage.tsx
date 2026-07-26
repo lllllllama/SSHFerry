@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
+import { ApiError, getErrorMessage } from '../../api/http';
 import { closeSession } from '../../api/sessions';
 import type { TransferDragPayload } from '../../api/types';
 import {
@@ -166,7 +167,19 @@ export function WorkspacePage() {
   }
 
   async function handleCloseSession(sessionId: string) {
-    await closeSessionMutation.mutateAsync({ session_id: sessionId });
+    try {
+      await closeSessionMutation.mutateAsync({ session_id: sessionId });
+    } catch (error) {
+      if (!(error instanceof ApiError && error.status === 404)) {
+        pushToast({
+          tone: 'danger',
+          title: t('workspace.toast.sessionCloseFailed'),
+          message: getErrorMessage(error),
+        });
+        return;
+      }
+      // 404 means the backend no longer knows this session; treat it as already closed.
+    }
     useWorkspaceStore.getState().closePane(sessionId);
     await queryClient.invalidateQueries({ queryKey: ['sessions'] });
     pushToast({ tone: 'success', title: t('workspace.toast.sessionClosed') });

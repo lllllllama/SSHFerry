@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
+import { getErrorMessage } from '../../api/http';
 import { createSite, updateSite } from '../../api/sites';
 import type { SiteResponse, SiteUpsertRequest } from '../../api/types';
 import { useI18n } from '../../i18n';
@@ -77,6 +78,7 @@ export function SiteEditorModal() {
   const setSelectedSiteName = useWorkspaceStore((state) => state.setSelectedSiteName);
   const [form, setForm] = useState<SiteFormState>(toFormState(null));
   const [parseError, setParseError] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const { formatAuthMethod, formatProtocol, t } = useI18n();
 
   const mutation = useMutation({
@@ -96,6 +98,15 @@ export function SiteEditorModal() {
       });
       closeSiteEditor();
     },
+    onError: (error) => {
+      const message = getErrorMessage(error, t('siteEditor.toast.saveFailed'));
+      setSaveError(message);
+      pushToast({
+        tone: 'danger',
+        title: t('siteEditor.toast.saveFailed'),
+        message,
+      });
+    },
   });
 
   useEffect(() => {
@@ -104,6 +115,7 @@ export function SiteEditorModal() {
     }
     setForm(toFormState(siteEditor.site));
     setParseError(false);
+    setSaveError(null);
   }, [siteEditor.open, siteEditor.site]);
 
   function patchForm(next: Partial<SiteFormState>) {
@@ -140,9 +152,10 @@ export function SiteEditorModal() {
           <button
             type="button"
             className="primary-button"
-            disabled={mutation.isPending}
+            disabled={mutation.isPending || !form.name.trim() || !form.host.trim() || !form.username.trim()}
             onClick={() => {
-              void mutation.mutateAsync(toPayload(form));
+              setSaveError(null);
+              mutation.mutate(toPayload(form));
             }}
           >
             {mutation.isPending ? t('common.saving') : t('common.save')}
@@ -278,6 +291,8 @@ export function SiteEditorModal() {
             </label>
           </div>
         </details>
+
+        {saveError ? <p className="inline-error">{saveError}</p> : null}
       </form>
     </Modal>
   );

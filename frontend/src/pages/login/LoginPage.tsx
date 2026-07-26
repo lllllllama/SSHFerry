@@ -47,6 +47,8 @@ export function LoginPage() {
       setCaptchaId(captcha.captcha_id);
       setCaptchaSvg(captcha.image_svg);
       setCaptchaCode('');
+    } catch (error) {
+      setFormError(getErrorMessage(error, t('auth.captchaLoadFailed')));
     } finally {
       setCaptchaLoading(false);
     }
