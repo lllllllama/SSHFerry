@@ -19,6 +19,7 @@ from src.shared.errors import (
     NetworkError,
     SSHFerryError,
 )
+from src.engines.sftp_engine import _parse_proxy_jump
 from src.shared.host_keys import fingerprint, install_policy
 from src.shared.models import SiteConfig
 from src.shared.paths import ensure_in_sandbox, normalize_remote_path, to_local_fs_path
@@ -32,6 +33,7 @@ class ScpEngine:
         self.logger = logger or logging.getLogger(__name__)
         self.ssh_client: Optional[paramiko.SSHClient] = None
         self.scp_client: Optional[SCPClient] = None
+        self._proxy_client: Optional[paramiko.SSHClient] = None
         self._connected = False
 
     def connect(self) -> None:
@@ -56,6 +58,9 @@ class ScpEngine:
                 if self.site_config.key_passphrase:
                     connect_kwargs["passphrase"] = self.site_config.key_passphrase
 
+            proxy_sock = self._open_proxy_channel()
+            if proxy_sock is not None:
+                connect_kwargs["sock"] = proxy_sock
             self.ssh_client.connect(**connect_kwargs)
             if SCPClient is None:
                 raise SSHFerryError(
@@ -95,6 +100,43 @@ class ScpEngine:
         except Exception as e:
             raise SSHFerryError(ErrorCode.UNKNOWN_ERROR, f"SCP connection failed: {e}")
 
+    def _open_proxy_channel(self):
+        """Open a direct-tcpip channel through the configured ProxyJump host."""
+        proxy_spec = (self.site_config.proxy_jump or "").strip()
+        if not proxy_spec:
+            return None
+
+        proxy_user, proxy_host, proxy_port = _parse_proxy_jump(
+            proxy_spec, default_user=self.site_config.username
+        )
+        proxy_kwargs = {
+            "hostname": proxy_host,
+            "port": proxy_port,
+            "username": proxy_user,
+            "timeout": 10,
+            "allow_agent": True,
+            "look_for_keys": True,
+        }
+        if self.site_config.auth_method == "password":
+            proxy_kwargs["password"] = self.site_config.password
+        elif self.site_config.auth_method == "key":
+            if self.site_config.key_path:
+                proxy_kwargs["key_filename"] = self.site_config.key_path
+            if self.site_config.key_passphrase:
+                proxy_kwargs["passphrase"] = self.site_config.key_passphrase
+
+        self._proxy_client = paramiko.SSHClient()
+        install_policy(self._proxy_client)
+        self._proxy_client.connect(**proxy_kwargs)
+        transport = self._proxy_client.get_transport()
+        if transport is None:
+            raise SSHFerryError(ErrorCode.REMOTE_DISCONNECT, "Jump host transport unavailable")
+        return transport.open_channel(
+            "direct-tcpip",
+            (self.site_config.host, self.site_config.port),
+            ("", 0),
+        )
+
     def disconnect(self) -> None:
         """Close SCP and SSH connections."""
         if self.scp_client:
@@ -103,6 +145,9 @@ class ScpEngine:
         if self.ssh_client:
             self.ssh_client.close()
             self.ssh_client = None
+        if self._proxy_client:
+            self._proxy_client.close()
+            self._proxy_client = None
         self._connected = False
 
     def is_connected(self) -> bool:
