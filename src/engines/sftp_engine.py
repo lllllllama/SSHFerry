@@ -234,10 +234,13 @@ class SftpEngine:
             "allow_agent": True,
             "look_for_keys": True,
         }
-        if self.site_config.key_path:
-            proxy_kwargs["key_filename"] = self.site_config.key_path
-        if self.site_config.key_passphrase:
-            proxy_kwargs["passphrase"] = self.site_config.key_passphrase
+        if self.site_config.auth_method == "password":
+            proxy_kwargs["password"] = self.site_config.password
+        elif self.site_config.auth_method == "key":
+            if self.site_config.key_path:
+                proxy_kwargs["key_filename"] = self.site_config.key_path
+            if self.site_config.key_passphrase:
+                proxy_kwargs["passphrase"] = self.site_config.key_passphrase
 
         self._proxy_client = paramiko.SSHClient()
         install_policy(self._proxy_client)
